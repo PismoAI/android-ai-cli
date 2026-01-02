@@ -92,31 +92,44 @@ public class LinuxEnvironment {
      * Set up the Linux environment (call from background thread)
      */
     public void setup(SetupCallback callback) {
+        String currentStep = "initializing";
         try {
+            currentStep = "creating directories";
             callback.onProgress("Creating directories...", 5);
             createDirectories();
+            Log.i(TAG, "Directories created successfully");
 
+            currentStep = "extracting proot";
             callback.onProgress("Extracting proot binary...", 10);
             extractProot();
+            Log.i(TAG, "Proot extracted successfully");
 
+            currentStep = "downloading Alpine";
             callback.onProgress("Downloading Alpine Linux...", 20);
             downloadAlpine(callback);
+            Log.i(TAG, "Alpine downloaded successfully");
 
+            currentStep = "configuring environment";
             callback.onProgress("Configuring environment...", 80);
             configureEnvironment();
+            Log.i(TAG, "Environment configured successfully");
 
-            callback.onProgress("Running setup script...", 90);
+            currentStep = "finalizing";
+            callback.onProgress("Finalizing setup...", 90);
             runSetupScript(callback);
 
             // Mark setup as complete
             new File(baseDir, ".setup_complete").createNewFile();
+            Log.i(TAG, "Setup complete!");
 
             callback.onProgress("Setup complete!", 100);
             callback.onComplete(true, null);
 
         } catch (Exception e) {
-            Log.e(TAG, "Setup failed", e);
-            callback.onComplete(false, e.getMessage());
+            String errorMsg = "Failed while " + currentStep + ": " +
+                (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            Log.e(TAG, errorMsg, e);
+            callback.onComplete(false, errorMsg);
         }
     }
 
