@@ -2,6 +2,8 @@ package jackpal.androidterm;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
@@ -10,6 +12,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -30,9 +33,11 @@ public class SetupActivity extends Activity {
     private TextView statusText;
     private TextView percentText;
     private Button retryButton;
+    private Button copyErrorButton;
     private Handler handler;
     private LinuxEnvironment linuxEnv;
     private PowerManager.WakeLock wakeLock;
+    private String lastError = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -146,6 +151,19 @@ public class SetupActivity extends Activity {
         retryButton.setLayoutParams(btnParams);
         layout.addView(retryButton);
 
+        // Copy error button (hidden initially)
+        copyErrorButton = new Button(this);
+        copyErrorButton.setText("Copy Error");
+        copyErrorButton.setVisibility(View.GONE);
+        copyErrorButton.setOnClickListener(v -> copyErrorToClipboard());
+        LinearLayout.LayoutParams copyBtnParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        copyBtnParams.setMargins(0, 16, 0, 0);
+        copyErrorButton.setLayoutParams(copyBtnParams);
+        layout.addView(copyErrorButton);
+
         // Info text
         TextView infoText = new TextView(this);
         infoText.setText("This will download ~50MB and may take a few minutes.\nA full Linux environment with Node.js will be installed.");
@@ -160,9 +178,13 @@ public class SetupActivity extends Activity {
 
     private void startSetup() {
         retryButton.setVisibility(View.GONE);
+        copyErrorButton.setVisibility(View.GONE);
+        statusText.setTextColor(Color.parseColor("#aaaaaa"));
+        statusText.setTextIsSelectable(false);
         progressBar.setProgress(0);
         percentText.setText("0%");
         statusText.setText("Starting setup...");
+        lastError = "";
 
         new Thread(() -> {
             linuxEnv.setup(new LinuxEnvironment.SetupCallback() {
@@ -181,14 +203,24 @@ public class SetupActivity extends Activity {
                         if (success) {
                             launchTerminal();
                         } else {
-                            statusText.setText("Setup failed: " + error);
+                            lastError = error != null ? error : "Unknown error";
+                            statusText.setText("Setup failed:\n" + lastError);
                             statusText.setTextColor(Color.parseColor("#ff6666"));
+                            statusText.setTextIsSelectable(true);
                             retryButton.setVisibility(View.VISIBLE);
+                            copyErrorButton.setVisibility(View.VISIBLE);
                         }
                     });
                 }
             });
         }).start();
+    }
+
+    private void copyErrorToClipboard() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData clip = ClipData.newPlainText("Setup Error", lastError);
+        clipboard.setPrimaryClip(clip);
+        Toast.makeText(this, "Error copied to clipboard", Toast.LENGTH_SHORT).show();
     }
 
     private void launchTerminal() {
