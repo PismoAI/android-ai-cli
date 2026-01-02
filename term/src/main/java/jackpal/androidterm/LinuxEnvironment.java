@@ -345,15 +345,13 @@ public class LinuxEnvironment {
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
         Log.i(TAG, "Starting Java-based extraction to " + destDir.getAbsolutePath());
 
-        // Clean up any existing files first (in case of retry)
-        if (destDir.exists()) {
-            Log.i(TAG, "Cleaning existing rootfs directory for fresh extraction");
-            deleteRecursive(destDir);
+        // Ensure destDir exists and is writable
+        if (!destDir.exists()) {
             destDir.mkdirs();
-            destDir.setReadable(true, false);
-            destDir.setWritable(true, false);
-            destDir.setExecutable(true, false);
         }
+        destDir.setReadable(true, false);
+        destDir.setWritable(true, false);
+        destDir.setExecutable(true, false);
 
         // Manual extraction using Java with larger buffer
         FileInputStream fis = new FileInputStream(tarGzFile);
@@ -372,6 +370,12 @@ public class LinuxEnvironment {
                 String name = entry.getName();
                 if (name == null || name.isEmpty()) continue;
 
+                // Remove leading ./ from path
+                while (name.startsWith("./")) {
+                    name = name.substring(2);
+                }
+                if (name.isEmpty()) continue;
+
                 // Security: prevent path traversal
                 if (name.contains("..")) {
                     Log.w(TAG, "Skipping suspicious entry: " + name);
@@ -382,29 +386,32 @@ public class LinuxEnvironment {
 
                 if (entry.isDirectory()) {
                     if (!outFile.exists()) {
-                        if (!outFile.mkdirs()) {
-                            Log.w(TAG, "Could not create directory: " + outFile);
-                        }
+                        outFile.mkdirs();
                     }
-                    // Set permissions on directory
+                    // Always set permissions on directory
                     outFile.setReadable(true, false);
                     outFile.setWritable(true, false);
                     outFile.setExecutable(true, false);
                     dirCount++;
                 } else if (entry.isSymlink()) {
-                    // Store symlink for later processing
+                    // Store symlink for later processing (with cleaned name)
                     symlinks.add(new String[]{name, entry.getLinkName()});
                     symlinkCount++;
                 } else {
                     // Ensure parent directory exists with proper permissions
                     File parentDir = outFile.getParentFile();
                     if (!parentDir.exists()) {
-                        if (!parentDir.mkdirs()) {
-                            throw new IOException("Cannot create parent dir: " + parentDir);
-                        }
-                        parentDir.setReadable(true, false);
-                        parentDir.setWritable(true, false);
-                        parentDir.setExecutable(true, false);
+                        parentDir.mkdirs();
+                    }
+                    // ALWAYS set parent writable before creating file
+                    parentDir.setReadable(true, false);
+                    parentDir.setWritable(true, false);
+                    parentDir.setExecutable(true, false);
+
+                    // Delete existing file if present
+                    if (outFile.exists()) {
+                        outFile.setWritable(true, false);
+                        outFile.delete();
                     }
 
                     // Extract file
@@ -422,6 +429,7 @@ public class LinuxEnvironment {
 
                     // Set permissions
                     outFile.setReadable(true, false);
+                    outFile.setWritable(true, false);
                     if (name.startsWith("bin/") ||
                         name.startsWith("sbin/") ||
                         name.startsWith("usr/bin/") ||
