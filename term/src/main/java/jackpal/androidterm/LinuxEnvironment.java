@@ -1,0 +1,386 @@
+package jackpal.androidterm;
+
+import android.content.Context;
+import android.os.Build;
+import android.util.Log;
+
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.zip.GZIPInputStream;
+
+/**
+ * Manages the Linux environment (Alpine Linux via PRoot)
+ */
+public class LinuxEnvironment {
+    private static final String TAG = "LinuxEnvironment";
+
+    // Alpine Linux minirootfs URL (arm64)
+    private static final String ALPINE_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.0-aarch64.tar.gz";
+
+    private final Context context;
+    private final File baseDir;
+    private final File rootfsDir;
+    private final File binDir;
+    private final File prootBinary;
+
+    public interface SetupCallback {
+        void onProgress(String message, int percent);
+        void onComplete(boolean success, String error);
+    }
+
+    public LinuxEnvironment(Context context) {
+        this.context = context;
+        this.baseDir = new File(context.getFilesDir(), "linux");
+        this.rootfsDir = new File(baseDir, "rootfs");
+        this.binDir = new File(baseDir, "bin");
+        this.prootBinary = new File(binDir, "proot");
+    }
+
+    /**
+     * Check if the Linux environment is already set up
+     */
+    public boolean isSetupComplete() {
+        File marker = new File(baseDir, ".setup_complete");
+        return marker.exists() && rootfsDir.exists() && prootBinary.exists();
+    }
+
+    /**
+     * Get the command to launch a shell in the proot environment
+     */
+    public String[] getShellCommand() {
+        if (!isSetupComplete()) {
+            // Fall back to system shell if not set up
+            return new String[]{"/system/bin/sh"};
+        }
+
+        String prootPath = prootBinary.getAbsolutePath();
+        String rootfsPath = rootfsDir.getAbsolutePath();
+
+        return new String[]{
+            prootPath,
+            "--link2symlink",
+            "-0",
+            "-r", rootfsPath,
+            "-b", "/dev",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-b", "/sdcard:/sdcard",
+            "-b", context.getFilesDir().getAbsolutePath() + ":/android",
+            "-w", "/root",
+            "/bin/bash",
+            "--login"
+        };
+    }
+
+    /**
+     * Get environment variables for the proot shell
+     */
+    public String[] getEnvironment() {
+        return new String[]{
+            "HOME=/root",
+            "USER=root",
+            "TERM=xterm-256color",
+            "LANG=C.UTF-8",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PROOT_TMP_DIR=" + new File(baseDir, "tmp").getAbsolutePath(),
+            "PROOT_NO_SECCOMP=1"
+        };
+    }
+
+    /**
+     * Set up the Linux environment (call from background thread)
+     */
+    public void setup(SetupCallback callback) {
+        try {
+            callback.onProgress("Creating directories...", 5);
+            createDirectories();
+
+            callback.onProgress("Extracting proot binary...", 10);
+            extractProot();
+
+            callback.onProgress("Downloading Alpine Linux...", 20);
+            downloadAlpine(callback);
+
+            callback.onProgress("Configuring environment...", 80);
+            configureEnvironment();
+
+            callback.onProgress("Running setup script...", 90);
+            runSetupScript(callback);
+
+            // Mark setup as complete
+            new File(baseDir, ".setup_complete").createNewFile();
+
+            callback.onProgress("Setup complete!", 100);
+            callback.onComplete(true, null);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Setup failed", e);
+            callback.onComplete(false, e.getMessage());
+        }
+    }
+
+    private void createDirectories() throws IOException {
+        baseDir.mkdirs();
+        rootfsDir.mkdirs();
+        binDir.mkdirs();
+        new File(baseDir, "tmp").mkdirs();
+
+        // Set permissions
+        baseDir.setExecutable(true, false);
+        binDir.setExecutable(true, false);
+    }
+
+    private void extractProot() throws IOException {
+        String arch = Build.SUPPORTED_ABIS[0];
+        String assetName;
+
+        if (arch.contains("arm64") || arch.contains("aarch64")) {
+            assetName = "bin/proot-aarch64";
+        } else if (arch.contains("arm")) {
+            assetName = "bin/proot-aarch64"; // Use aarch64 for now
+        } else {
+            throw new IOException("Unsupported architecture: " + arch);
+        }
+
+        InputStream in = context.getAssets().open(assetName);
+        FileOutputStream out = new FileOutputStream(prootBinary);
+
+        byte[] buffer = new byte[8192];
+        int len;
+        while ((len = in.read(buffer)) > 0) {
+            out.write(buffer, 0, len);
+        }
+
+        in.close();
+        out.close();
+
+        prootBinary.setExecutable(true, false);
+    }
+
+    private void downloadAlpine(SetupCallback callback) throws IOException {
+        File tarFile = new File(baseDir, "alpine.tar.gz");
+
+        // Download
+        URL url = new URL(ALPINE_URL);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(60000);
+
+        int fileSize = conn.getContentLength();
+        InputStream in = conn.getInputStream();
+        FileOutputStream out = new FileOutputStream(tarFile);
+
+        byte[] buffer = new byte[8192];
+        int len;
+        long downloaded = 0;
+
+        while ((len = in.read(buffer)) > 0) {
+            out.write(buffer, 0, len);
+            downloaded += len;
+            if (fileSize > 0) {
+                int percent = 20 + (int) ((downloaded * 50) / fileSize);
+                callback.onProgress("Downloading Alpine Linux...", Math.min(percent, 70));
+            }
+        }
+
+        in.close();
+        out.close();
+        conn.disconnect();
+
+        // Extract
+        callback.onProgress("Extracting Alpine Linux...", 75);
+        extractTarGz(tarFile, rootfsDir);
+
+        // Clean up
+        tarFile.delete();
+    }
+
+    private void extractTarGz(File tarGzFile, File destDir) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder(
+            "/system/bin/tar",
+            "-xzf",
+            tarGzFile.getAbsolutePath(),
+            "-C",
+            destDir.getAbsolutePath()
+        );
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+
+        try {
+            int exitCode = p.waitFor();
+            if (exitCode != 0) {
+                // Try with busybox or alternative
+                extractTarGzFallback(tarGzFile, destDir);
+            }
+        } catch (InterruptedException e) {
+            throw new IOException("Extraction interrupted");
+        }
+    }
+
+    private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
+        // Manual extraction using Java
+        GZIPInputStream gzIn = new GZIPInputStream(new FileInputStream(tarGzFile));
+        TarInputStream tarIn = new TarInputStream(gzIn);
+
+        TarEntry entry;
+        while ((entry = tarIn.getNextEntry()) != null) {
+            File outFile = new File(destDir, entry.getName());
+
+            if (entry.isDirectory()) {
+                outFile.mkdirs();
+            } else {
+                outFile.getParentFile().mkdirs();
+                FileOutputStream out = new FileOutputStream(outFile);
+                tarIn.copyEntryContents(out);
+                out.close();
+
+                if (entry.getName().startsWith("bin/") ||
+                    entry.getName().startsWith("sbin/") ||
+                    entry.getName().startsWith("usr/bin/") ||
+                    entry.getName().startsWith("usr/sbin/")) {
+                    outFile.setExecutable(true, false);
+                }
+            }
+        }
+
+        tarIn.close();
+    }
+
+    private void configureEnvironment() throws IOException {
+        // Create resolv.conf for DNS
+        File etcDir = new File(rootfsDir, "etc");
+        etcDir.mkdirs();
+
+        FileWriter fw = new FileWriter(new File(etcDir, "resolv.conf"));
+        fw.write("nameserver 8.8.8.8\n");
+        fw.write("nameserver 8.8.4.4\n");
+        fw.close();
+
+        // Copy setup script
+        File setupScript = new File(rootfsDir, "root/setup.sh");
+        setupScript.getParentFile().mkdirs();
+
+        InputStream in = context.getAssets().open("scripts/setup-alpine.sh");
+        FileOutputStream out = new FileOutputStream(setupScript);
+
+        byte[] buffer = new byte[4096];
+        int len;
+        while ((len = in.read(buffer)) > 0) {
+            out.write(buffer, 0, len);
+        }
+
+        in.close();
+        out.close();
+        setupScript.setExecutable(true, false);
+    }
+
+    private void runSetupScript(SetupCallback callback) {
+        // The setup script will run on first login via .profile
+        // For now, just create a marker that setup needs to run
+        try {
+            File profileDir = new File(rootfsDir, "root");
+            profileDir.mkdirs();
+
+            FileWriter fw = new FileWriter(new File(profileDir, ".profile"));
+            fw.write("#!/bin/sh\n");
+            fw.write("if [ ! -f /root/.setup_done ]; then\n");
+            fw.write("    /root/setup.sh && touch /root/.setup_done\n");
+            fw.write("fi\n");
+            fw.write("[ -f /root/.bashrc ] && . /root/.bashrc\n");
+            fw.close();
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to create profile", e);
+        }
+    }
+
+    // Simple TAR implementation for fallback
+    private static class TarInputStream extends FilterInputStream {
+        private TarEntry currentEntry;
+        private long remaining;
+
+        public TarInputStream(InputStream in) {
+            super(in);
+        }
+
+        public TarEntry getNextEntry() throws IOException {
+            // Skip remaining bytes of current entry
+            while (remaining > 0) {
+                remaining -= skip(remaining);
+            }
+
+            // Read header
+            byte[] header = new byte[512];
+            int read = 0;
+            while (read < 512) {
+                int r = in.read(header, read, 512 - read);
+                if (r < 0) return null;
+                read += r;
+            }
+
+            // Check for end of archive
+            boolean allZero = true;
+            for (int i = 0; i < 512; i++) {
+                if (header[i] != 0) {
+                    allZero = false;
+                    break;
+                }
+            }
+            if (allZero) return null;
+
+            currentEntry = new TarEntry(header);
+            remaining = currentEntry.size;
+
+            return currentEntry;
+        }
+
+        public void copyEntryContents(OutputStream out) throws IOException {
+            byte[] buffer = new byte[8192];
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buffer.length, remaining);
+                int read = in.read(buffer, 0, toRead);
+                if (read < 0) break;
+                out.write(buffer, 0, read);
+                remaining -= read;
+            }
+            // Skip padding
+            long padding = (512 - (currentEntry.size % 512)) % 512;
+            while (padding > 0) {
+                padding -= in.skip(padding);
+            }
+        }
+    }
+
+    private static class TarEntry {
+        String name;
+        long size;
+        byte type;
+
+        TarEntry(byte[] header) {
+            // Name: bytes 0-99
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 100 && header[i] != 0; i++) {
+                sb.append((char) header[i]);
+            }
+            name = sb.toString();
+
+            // Size: bytes 124-135 (octal)
+            sb = new StringBuilder();
+            for (int i = 124; i < 136 && header[i] != 0 && header[i] != ' '; i++) {
+                sb.append((char) header[i]);
+            }
+            try {
+                size = Long.parseLong(sb.toString().trim(), 8);
+            } catch (NumberFormatException e) {
+                size = 0;
+            }
+
+            // Type: byte 156
+            type = header[156];
+        }
+
+        boolean isDirectory() {
+            return type == '5' || name.endsWith("/");
+        }
+    }
+}

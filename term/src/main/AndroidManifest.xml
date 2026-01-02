@@ -23,16 +23,21 @@
     <application android:icon="@drawable/ic_launcher"
                 android:label="@string/application_terminal"
                 android:hardwareAccelerated="true"
-                android:theme="@style/Theme">
-        <activity android:name=".Term"
-                android:launchMode="singleTask"
+                android:theme="@style/Theme"
+                android:usesCleartextTraffic="true">
+        <activity android:name=".SetupActivity"
                 android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
-                android:windowSoftInputMode="adjustResize|stateAlwaysVisible"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+        <activity android:name=".Term"
+                android:launchMode="singleTask"
+                android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
+                android:windowSoftInputMode="adjustResize|stateAlwaysVisible"
+                android:exported="true">
         </activity>
         <activity-alias android:name=".TermInternal"
                 android:targetActivity=".Term"
