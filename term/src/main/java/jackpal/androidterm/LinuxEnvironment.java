@@ -357,6 +357,9 @@ public class LinuxEnvironment {
             Log.i(TAG, "Falling back to Java extraction");
             extractTarGzFallback(tarGzFile, destDir);
         }
+
+        // ALWAYS ensure critical symlinks exist, regardless of extraction method
+        createCriticalSymlinks(destDir);
     }
 
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
@@ -472,9 +475,6 @@ public class LinuxEnvironment {
             createSymlink(destDir, link[0], link[1]);
         }
         Log.i(TAG, "Symlinks created");
-
-        // CRITICAL: Ensure /bin/sh exists - Alpine needs this
-        createCriticalSymlinks(destDir);
     }
 
     private void createCriticalSymlinks(File destDir) throws IOException {
