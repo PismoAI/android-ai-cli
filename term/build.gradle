@@ -37,12 +37,6 @@ android {
     lint {
         abortOnError false
     }
-
-    externalNativeBuild {
-        ndkBuild {
-            path file('src/main/jni/Android.mk')
-        }
-    }
 }
 
 dependencies {
