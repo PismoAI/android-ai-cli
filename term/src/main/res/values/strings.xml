@@ -15,7 +15,7 @@
  * limitations under the License.
 -->
 <resources>
-   <string name="application_terminal">Terminal Emulator</string>
+   <string name="application_terminal">Android AI CLI</string>
    <string name="preferences">Preferences</string>
    <string name="new_window">New window</string>
    <string name="close_window">Close window</string>
@@ -141,14 +141,14 @@
 
   <string name="confirm_window_close_message">Close this window?</string>
 
-  <string name="perm_run_script">Run arbitrary commands in Terminal Emulator</string>
-  <string name="permdesc_run_script">Allows application to open new windows in Terminal Emulator for Android and run commands in those windows with all of Terminal Emulator for Android\'s permissions, including access to the Internet and your SD Card.</string>
-  <string name="perm_append_to_path">Add commands to Terminal Emulator</string>
-  <string name="permdesc_append_to_path">Allows application to provide additional commands (add directories to the PATH) for Terminal Emulator for Android.</string>
-  <string name="perm_prepend_to_path">Override commands in Terminal Emulator</string>
-  <string name="permdesc_prepend_to_path">Allows application to override existing commands with its own versions (prepend directories to the PATH) in Terminal Emulator for Android.</string>
+  <string name="perm_run_script">Run arbitrary commands in Android AI CLI</string>
+  <string name="permdesc_run_script">Allows application to open new windows in Android AI CLI and run commands in those windows with all of Android AI CLI\'s permissions, including access to the Internet and your SD Card.</string>
+  <string name="perm_append_to_path">Add commands to Android AI CLI</string>
+  <string name="permdesc_append_to_path">Allows application to provide additional commands (add directories to the PATH) for Android AI CLI.</string>
+  <string name="perm_prepend_to_path">Override commands in Android AI CLI</string>
+  <string name="permdesc_prepend_to_path">Allows application to override existing commands with its own versions (prepend directories to the PATH) in Android AI CLI.</string>
 
-  <string name="email_transcript_subject">Transcript from Terminal Emulator for Android</string>
+  <string name="email_transcript_subject">Transcript from Android AI CLI</string>
   <string name="email_transcript_chooser_title">Mail transcript using:</string>
   <string name="email_transcript_no_email_activity_found">Could not choose an email activity to send transcript.</string>
 
@@ -164,7 +164,7 @@
   <string name="use_keyboard_shortcuts_summary_off">Keyboard shortcuts disabled.</string>
 
   <string name="help">Help</string>
-  <string name="help_url" translatable="false">http://jackpal.github.com/Android-Terminal-Emulator/help/index.html</string>
+  <string name="help_url" translatable="false">https://github.com/PismoAI/android-ai-cli</string>
   <string name="activity_term_here_title">Term here</string>
   <!-- BEGIN SHORTCUT RELATED STRINGS -->
   <!-- AndroidManifest.xml -->

@@ -1,30 +1,32 @@
-# Terminal Emulator for Android
+# Android AI CLI
 
-*Note:* Terminal Emulator for Android development has ended. I am not
-accepting pull requests any more.
+A powerful terminal emulator for Android, designed for AI-powered command-line workflows.
 
-Terminal Emulator for Android is a terminal emulator for communicating with the
-built-in Android shell. It emulates a reasonably large subset of Digital
-Equipment Corporation VT-100 terminal codes, so that programs like "vi", "Emacs"
-and "NetHack" will display properly.
+[![Build APK](https://github.com/PismoAI/android-ai-cli/actions/workflows/build.yml/badge.svg)](https://github.com/PismoAI/android-ai-cli/actions/workflows/build.yml)
 
-This application was previously named "Android Terminal Emulator". Same great
-application, just with a new name. (The change was made at the request of the
-Android trademark owner.)
+## Download
 
-This code is based on the "Term" application which is included in the Android
-Open Source Project. (Which I also wrote. :-) )
+Get the latest APK from [GitHub Actions](https://github.com/PismoAI/android-ai-cli/actions) - click on the latest successful build and download from Artifacts.
 
-[Download the Terminal Emulator for Android from Google Play](https://play.google.com/store/apps/details?id=jackpal.androidterm)
+## Features
 
-If you are unable to use the Play Store, you can also
-[download from GitHub](https://jackpal.github.io/Android-Terminal-Emulator/)
+- Full terminal emulator with shell access
+- Multiple windows support
+- Configurable keyboard shortcuts
+- Hardware keyboard support
+- UTF-8 encoding
+- Customizable colors and fonts
 
-See [Building](docs/Building.md) for build instructions.
+## Building
 
-Got questions? Please check out the
-[FAQ](http://github.com/jackpal/Android-Terminal-Emulator/wiki/Frequently-Asked-Questions). Thanks!
+```bash
+./gradlew assembleRelease
+```
 
-Please see the
-[Recent Updates](http://github.com/jackpal/Android-Terminal-Emulator/wiki/Recent-Updates)
-page for recent updates.
+The APK will be in `term/build/outputs/apk/release/`
+
+## License
+
+Apache License 2.0 - See [LICENSE](LICENSE) for details.
+
+Based on [Android Terminal Emulator](https://github.com/jackpal/Android-Terminal-Emulator) by Jack Palevich.
