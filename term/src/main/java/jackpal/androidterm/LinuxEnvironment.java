@@ -104,11 +104,28 @@ public class LinuxEnvironment {
     }
 
     /**
+     * Reset the Linux environment (delete all files for fresh start)
+     */
+    public void reset() {
+        Log.i(TAG, "Resetting Linux environment...");
+        // Delete setup complete marker
+        new File(baseDir, ".setup_complete").delete();
+        // Delete the entire linux directory
+        deleteRecursive(baseDir);
+        Log.i(TAG, "Reset complete");
+    }
+
+    /**
      * Set up the Linux environment (call from background thread)
      */
     public void setup(SetupCallback callback) {
         String currentStep = "initializing";
         try {
+            // Reset any previous failed attempt
+            currentStep = "resetting previous attempt";
+            callback.onProgress("Cleaning up...", 2);
+            reset();
+
             currentStep = "creating directories";
             callback.onProgress("Creating directories...", 5);
             createDirectories();
