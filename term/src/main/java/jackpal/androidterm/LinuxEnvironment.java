@@ -120,14 +120,30 @@ public class LinuxEnvironment {
             downloadAlpine(callback);
             Log.i(TAG, "Alpine downloaded successfully");
 
-            currentStep = "configuring environment";
-            callback.onProgress("Configuring environment...", 80);
-            configureEnvironment();
-            Log.i(TAG, "Environment configured successfully");
+            currentStep = "extracting Alpine";
+            // Note: extraction is called inside downloadAlpine, but log for clarity
+            Log.i(TAG, "Extraction should be complete");
 
-            currentStep = "finalizing";
-            callback.onProgress("Finalizing setup...", 90);
-            runSetupScript(callback);
+            currentStep = "configuring DNS";
+            callback.onProgress("Configuring DNS...", 80);
+            configureDns();
+            Log.i(TAG, "DNS configured");
+
+            currentStep = "copying setup script";
+            callback.onProgress("Copying setup script...", 85);
+            copySetupScript();
+            Log.i(TAG, "Setup script copied");
+
+            currentStep = "creating profile";
+            callback.onProgress("Creating profile...", 90);
+            createProfile();
+            Log.i(TAG, "Profile created");
+
+            // Verify setup
+            currentStep = "verifying setup";
+            callback.onProgress("Verifying setup...", 95);
+            verifySetup();
+            Log.i(TAG, "Setup verified");
 
             // Mark setup as complete
             new File(baseDir, ".setup_complete").createNewFile();
@@ -343,8 +359,7 @@ public class LinuxEnvironment {
         }
     }
 
-    private void configureEnvironment() throws IOException {
-        // Create resolv.conf for DNS
+    private void configureDns() throws IOException {
         File etcDir = new File(rootfsDir, "etc");
         etcDir.mkdirs();
 
@@ -352,8 +367,10 @@ public class LinuxEnvironment {
         fw.write("nameserver 8.8.8.8\n");
         fw.write("nameserver 8.8.4.4\n");
         fw.close();
+        Log.i(TAG, "Created resolv.conf");
+    }
 
-        // Copy setup script
+    private void copySetupScript() throws IOException {
         File setupScript = new File(rootfsDir, "root/setup.sh");
         setupScript.getParentFile().mkdirs();
 
@@ -369,25 +386,47 @@ public class LinuxEnvironment {
         in.close();
         out.close();
         setupScript.setExecutable(true, false);
+        Log.i(TAG, "Copied setup.sh to " + setupScript.getAbsolutePath());
     }
 
-    private void runSetupScript(SetupCallback callback) {
-        // The setup script will run on first login via .profile
-        // For now, just create a marker that setup needs to run
-        try {
-            File profileDir = new File(rootfsDir, "root");
-            profileDir.mkdirs();
+    private void createProfile() throws IOException {
+        File profileDir = new File(rootfsDir, "root");
+        profileDir.mkdirs();
 
-            FileWriter fw = new FileWriter(new File(profileDir, ".profile"));
-            fw.write("#!/bin/sh\n");
-            fw.write("if [ ! -f /root/.setup_done ]; then\n");
-            fw.write("    /root/setup.sh && touch /root/.setup_done\n");
-            fw.write("fi\n");
-            fw.write("[ -f /root/.bashrc ] && . /root/.bashrc\n");
-            fw.close();
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to create profile", e);
+        FileWriter fw = new FileWriter(new File(profileDir, ".profile"));
+        fw.write("#!/bin/sh\n");
+        fw.write("if [ ! -f /root/.setup_done ]; then\n");
+        fw.write("    echo 'Running first-time setup...'\n");
+        fw.write("    /root/setup.sh && touch /root/.setup_done\n");
+        fw.write("fi\n");
+        fw.write("[ -f /root/.bashrc ] && . /root/.bashrc\n");
+        fw.close();
+        Log.i(TAG, "Created .profile");
+    }
+
+    private void verifySetup() throws IOException {
+        // Check that critical files exist
+        File[] requiredFiles = {
+            prootBinary,
+            new File(rootfsDir, "bin/sh"),
+            new File(rootfsDir, "etc/resolv.conf"),
+            new File(rootfsDir, "root/setup.sh"),
+            new File(rootfsDir, "root/.profile")
+        };
+
+        for (File f : requiredFiles) {
+            if (!f.exists()) {
+                throw new IOException("Missing required file: " + f.getAbsolutePath());
+            }
+            Log.d(TAG, "Verified: " + f.getAbsolutePath());
         }
+
+        // Make sure proot is executable
+        if (!prootBinary.canExecute()) {
+            prootBinary.setExecutable(true, false);
+        }
+
+        Log.i(TAG, "All required files verified");
     }
 
     // Simple TAR implementation for fallback
