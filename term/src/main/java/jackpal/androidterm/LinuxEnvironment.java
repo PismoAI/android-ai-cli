@@ -14,11 +14,15 @@ import android.util.Log;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.zip.GZIPInputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Manages the Linux environment (Alpine Linux via PRoot)
@@ -349,6 +353,8 @@ public class LinuxEnvironment {
 
         int fileCount = 0;
         int dirCount = 0;
+        int symlinkCount = 0;
+        List<String[]> symlinks = new ArrayList<>(); // Store symlinks to create later
         TarEntry entry;
 
         try {
@@ -375,6 +381,10 @@ public class LinuxEnvironment {
                     outFile.setWritable(true, false);
                     outFile.setExecutable(true, false);
                     dirCount++;
+                } else if (entry.isSymlink()) {
+                    // Store symlink for later processing
+                    symlinks.add(new String[]{name, entry.getLinkName()});
+                    symlinkCount++;
                 } else {
                     // Ensure parent directory exists with proper permissions
                     File parentDir = outFile.getParentFile();
@@ -412,14 +422,98 @@ public class LinuxEnvironment {
                     fileCount++;
                 }
 
-                if ((fileCount + dirCount) % 200 == 0) {
-                    Log.d(TAG, "Extracted " + fileCount + " files, " + dirCount + " dirs...");
+                if ((fileCount + dirCount + symlinkCount) % 200 == 0) {
+                    Log.d(TAG, "Extracted " + fileCount + " files, " + dirCount + " dirs, " + symlinkCount + " symlinks...");
                 }
             }
-            Log.i(TAG, "Extraction complete: " + fileCount + " files, " + dirCount + " directories");
+            Log.i(TAG, "Extraction complete: " + fileCount + " files, " + dirCount + " dirs, " + symlinkCount + " symlinks");
         } finally {
             tarIn.close();
         }
+
+        // Process symlinks
+        Log.i(TAG, "Creating " + symlinks.size() + " symlinks...");
+        for (String[] link : symlinks) {
+            createSymlink(destDir, link[0], link[1]);
+        }
+        Log.i(TAG, "Symlinks created");
+    }
+
+    private void createSymlink(File destDir, String linkPath, String target) {
+        File linkFile = new File(destDir, linkPath);
+        File parentDir = linkFile.getParentFile();
+
+        if (!parentDir.exists()) {
+            parentDir.mkdirs();
+        }
+
+        // Try to create symlink using Java NIO (Android 8+)
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                Files.createSymbolicLink(linkFile.toPath(), Paths.get(target));
+                Log.d(TAG, "Created symlink: " + linkPath + " -> " + target);
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "NIO symlink failed for " + linkPath + ": " + e.getMessage());
+            }
+        }
+
+        // Try using ln -s command
+        try {
+            ProcessBuilder pb = new ProcessBuilder("ln", "-sf", target, linkFile.getAbsolutePath());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            int exitCode = p.waitFor();
+            if (exitCode == 0) {
+                Log.d(TAG, "Created symlink via ln: " + linkPath + " -> " + target);
+                return;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "ln symlink failed for " + linkPath + ": " + e.getMessage());
+        }
+
+        // Fallback: if target is a file and exists, copy it
+        File targetFile = new File(destDir, target);
+        if (!targetFile.isAbsolute()) {
+            targetFile = new File(linkFile.getParentFile(), target);
+        }
+
+        if (targetFile.exists() && targetFile.isFile()) {
+            try {
+                copyFile(targetFile, linkFile);
+                linkFile.setExecutable(targetFile.canExecute(), false);
+                Log.d(TAG, "Copied instead of symlink: " + linkPath + " <- " + target);
+                return;
+            } catch (IOException e) {
+                Log.w(TAG, "Copy fallback failed for " + linkPath + ": " + e.getMessage());
+            }
+        }
+
+        // Last resort: create a shell script wrapper for common binaries
+        if (linkPath.startsWith("bin/") || linkPath.startsWith("usr/bin/") ||
+            linkPath.startsWith("sbin/") || linkPath.startsWith("usr/sbin/")) {
+            try {
+                FileWriter fw = new FileWriter(linkFile);
+                fw.write("#!/bin/sh\nexec " + target + " \"$@\"\n");
+                fw.close();
+                linkFile.setExecutable(true, false);
+                Log.d(TAG, "Created wrapper script: " + linkPath + " -> " + target);
+            } catch (IOException e) {
+                Log.w(TAG, "Wrapper script failed for " + linkPath + ": " + e.getMessage());
+            }
+        }
+    }
+
+    private void copyFile(File src, File dst) throws IOException {
+        FileInputStream in = new FileInputStream(src);
+        FileOutputStream out = new FileOutputStream(dst);
+        byte[] buffer = new byte[8192];
+        int len;
+        while ((len = in.read(buffer)) > 0) {
+            out.write(buffer, 0, len);
+        }
+        in.close();
+        out.close();
     }
 
     private void configureDns() throws IOException {
@@ -551,11 +645,20 @@ public class LinuxEnvironment {
 
     private static class TarEntry {
         String name;
+        String linkName;
         long size;
         byte type;
 
         String getName() {
             return name;
+        }
+
+        String getLinkName() {
+            return linkName;
+        }
+
+        boolean isSymlink() {
+            return type == '2' || type == '1'; // '2' = symlink, '1' = hardlink
         }
 
         TarEntry(byte[] header) {
@@ -565,6 +668,13 @@ public class LinuxEnvironment {
                 sb.append((char) header[i]);
             }
             name = sb.toString();
+
+            // Link name: bytes 157-256 (for symlinks)
+            sb = new StringBuilder();
+            for (int i = 157; i < 257 && header[i] != 0; i++) {
+                sb.append((char) header[i]);
+            }
+            linkName = sb.toString();
 
             // Size: bytes 124-135 (octal)
             sb = new StringBuilder();
