@@ -345,6 +345,16 @@ public class LinuxEnvironment {
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
         Log.i(TAG, "Starting Java-based extraction to " + destDir.getAbsolutePath());
 
+        // Clean up any existing files first (in case of retry)
+        if (destDir.exists()) {
+            Log.i(TAG, "Cleaning existing rootfs directory for fresh extraction");
+            deleteRecursive(destDir);
+            destDir.mkdirs();
+            destDir.setReadable(true, false);
+            destDir.setWritable(true, false);
+            destDir.setExecutable(true, false);
+        }
+
         // Manual extraction using Java with larger buffer
         FileInputStream fis = new FileInputStream(tarGzFile);
         BufferedInputStream bis = new BufferedInputStream(fis, 65536);
@@ -514,6 +524,20 @@ public class LinuxEnvironment {
         }
         in.close();
         out.close();
+    }
+
+    private void deleteRecursive(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursive(child);
+                }
+            }
+        }
+        // Make writable before deleting
+        file.setWritable(true, false);
+        file.delete();
     }
 
     private void configureDns() throws IOException {
