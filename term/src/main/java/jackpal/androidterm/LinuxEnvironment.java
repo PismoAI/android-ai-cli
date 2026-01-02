@@ -447,6 +447,83 @@ public class LinuxEnvironment {
             createSymlink(destDir, link[0], link[1]);
         }
         Log.i(TAG, "Symlinks created");
+
+        // CRITICAL: Ensure /bin/sh exists - Alpine needs this
+        createCriticalSymlinks(destDir);
+    }
+
+    private void createCriticalSymlinks(File destDir) throws IOException {
+        File binDir = new File(destDir, "bin");
+        File busybox = new File(binDir, "busybox");
+        File sh = new File(binDir, "sh");
+
+        Log.i(TAG, "Checking critical symlinks...");
+        Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + busybox.length());
+        Log.i(TAG, "sh exists: " + sh.exists());
+
+        if (!busybox.exists()) {
+            throw new IOException("busybox not found in extracted rootfs!");
+        }
+
+        // Make busybox executable
+        busybox.setExecutable(true, false);
+
+        // If /bin/sh doesn't exist, we need to create it
+        if (!sh.exists()) {
+            Log.i(TAG, "Creating /bin/sh -> busybox using busybox --install");
+
+            // Try busybox --install first
+            try {
+                ProcessBuilder pb = new ProcessBuilder(
+                    busybox.getAbsolutePath(), "--install", "-s", binDir.getAbsolutePath()
+                );
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    Log.d(TAG, "busybox install: " + line);
+                }
+
+                int exitCode = p.waitFor();
+                Log.i(TAG, "busybox --install exit code: " + exitCode);
+
+                if (sh.exists()) {
+                    Log.i(TAG, "busybox --install succeeded, /bin/sh created");
+                    return;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "busybox --install failed: " + e.getMessage());
+            }
+
+            // Fallback: copy busybox to sh
+            Log.i(TAG, "Falling back to copying busybox to sh");
+            copyFile(busybox, sh);
+            sh.setExecutable(true, false);
+
+            if (sh.exists()) {
+                Log.i(TAG, "Created /bin/sh by copying busybox");
+            } else {
+                throw new IOException("Failed to create /bin/sh");
+            }
+        }
+
+        // Also ensure other critical symlinks exist
+        String[] criticalLinks = {"ash", "ls", "cat", "cp", "mv", "rm", "mkdir", "chmod", "chown", "ln", "env", "which", "pwd", "echo", "test", "true", "false"};
+        for (String cmd : criticalLinks) {
+            File cmdFile = new File(binDir, cmd);
+            if (!cmdFile.exists()) {
+                try {
+                    copyFile(busybox, cmdFile);
+                    cmdFile.setExecutable(true, false);
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not create " + cmd + ": " + e.getMessage());
+                }
+            }
+        }
+
+        Log.i(TAG, "Critical symlinks verified/created");
     }
 
     private void createSymlink(File destDir, String linkPath, String target) {
