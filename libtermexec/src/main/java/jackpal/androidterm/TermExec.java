@@ -2,7 +2,7 @@ package jackpal.androidterm;
 
 import android.annotation.TargetApi;
 import android.os.*;
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -19,7 +19,7 @@ import java.util.*;
 public class TermExec {
     // Warning: bump the library revision, when an incompatible change happens
     static {
-        System.loadLibrary("jackpal-termexec2");
+        System.loadLibrary("termexec");
     }
 
     public static final String SERVICE_ACTION_V1 = "jackpal.androidterm.action.START_TERM.v1";
