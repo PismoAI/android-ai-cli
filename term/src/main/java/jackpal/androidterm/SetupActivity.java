@@ -1,6 +1,7 @@
 package jackpal.androidterm;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
@@ -14,11 +15,13 @@ import android.widget.Button;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.util.TypedValue;
+import android.util.Log;
 
 /**
  * First-launch setup activity that downloads and configures the Linux environment
  */
 public class SetupActivity extends Activity {
+    private static final String TAG = "SetupActivity";
 
     private ProgressBar progressBar;
     private TextView statusText;
@@ -29,23 +32,40 @@ public class SetupActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        // Request window features BEFORE super.onCreate()
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        super.onCreate(savedInstanceState);
 
-        handler = new Handler(Looper.getMainLooper());
-        linuxEnv = new LinuxEnvironment(this);
+        try {
+            handler = new Handler(Looper.getMainLooper());
+            linuxEnv = new LinuxEnvironment(this);
 
-        // Check if already set up
-        if (linuxEnv.isSetupComplete()) {
-            launchTerminal();
-            return;
+            // Check if already set up
+            if (linuxEnv.isSetupComplete()) {
+                Log.i(TAG, "Setup already complete, launching terminal");
+                launchTerminal();
+                return;
+            }
+
+            Log.i(TAG, "Starting first-time setup");
+
+            // Create UI programmatically
+            createUI();
+
+            // Start setup
+            startSetup();
+        } catch (Exception e) {
+            Log.e(TAG, "Error in onCreate", e);
+            showError("Startup error: " + e.getMessage());
         }
+    }
 
-        // Create UI programmatically
-        createUI();
-
-        // Start setup
-        startSetup();
+    private void showError(String message) {
+        new AlertDialog.Builder(this)
+            .setTitle("Error")
+            .setMessage(message)
+            .setPositiveButton("OK", (dialog, which) -> finish())
+            .show();
     }
 
     private void createUI() {
