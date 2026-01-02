@@ -29,6 +29,8 @@ import android.preference.PreferenceManager;
 import android.text.TextUtils;
 import android.util.Log;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 
 import jackpal.androidterm.emulatorview.TermSession;
@@ -94,12 +96,33 @@ public class TermService extends Service implements TermSession.FinishCallback
         mTermSessions = new SessionList();
 
         /* Put the service in the foreground. */
-        Notification notification = new Notification(R.drawable.ic_stat_service_notification_icon, getText(R.string.service_notify_text), System.currentTimeMillis());
-        notification.flags |= Notification.FLAG_ONGOING_EVENT;
+        String channelId = "terminal_service";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                channelId,
+                getText(R.string.application_terminal),
+                NotificationManager.IMPORTANCE_LOW
+            );
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            nm.createNotificationChannel(channel);
+        }
+
         Intent notifyIntent = new Intent(this, Term.class);
         notifyIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifyIntent, 0);
-        notification.setLatestEventInfo(this, getText(R.string.application_terminal), getText(R.string.service_notify_text), pendingIntent);
+        int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notifyIntent, pendingFlags);
+
+        Notification notification = new Notification.Builder(this, channelId)
+            .setSmallIcon(R.drawable.ic_stat_service_notification_icon)
+            .setContentTitle(getText(R.string.application_terminal))
+            .setContentText(getText(R.string.service_notify_text))
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build();
+
         compat.startForeground(RUNNING_NOTIFICATION, notification);
 
         Log.d(TermDebug.LOG_TAG, "TermService started");
@@ -141,8 +164,12 @@ public class TermService extends Service implements TermSession.FinishCallback
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra(RemoteInterface.PRIVEXTRA_TARGET_WINDOW, sessionHandle);
 
+            int flags = 0;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags = PendingIntent.FLAG_IMMUTABLE;
+            }
             final PendingIntent result = PendingIntent.getActivity(getApplicationContext(), sessionHandle.hashCode(),
-                    switchIntent, 0);
+                    switchIntent, flags);
 
             final PackageManager pm = getPackageManager();
             final String[] pkgs = pm.getPackagesForUid(getCallingUid());
