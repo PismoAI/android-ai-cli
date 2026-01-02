@@ -161,14 +161,46 @@ public class LinuxEnvironment {
     }
 
     private void createDirectories() throws IOException {
-        baseDir.mkdirs();
-        rootfsDir.mkdirs();
-        binDir.mkdirs();
-        new File(baseDir, "tmp").mkdirs();
+        // Create all directories
+        if (!baseDir.exists() && !baseDir.mkdirs()) {
+            throw new IOException("Failed to create base directory: " + baseDir);
+        }
+        if (!rootfsDir.exists() && !rootfsDir.mkdirs()) {
+            throw new IOException("Failed to create rootfs directory: " + rootfsDir);
+        }
+        if (!binDir.exists() && !binDir.mkdirs()) {
+            throw new IOException("Failed to create bin directory: " + binDir);
+        }
+        File tmpDir = new File(baseDir, "tmp");
+        if (!tmpDir.exists() && !tmpDir.mkdirs()) {
+            throw new IOException("Failed to create tmp directory: " + tmpDir);
+        }
 
-        // Set permissions
+        // Set full permissions on all directories
+        baseDir.setReadable(true, false);
+        baseDir.setWritable(true, false);
         baseDir.setExecutable(true, false);
+
+        rootfsDir.setReadable(true, false);
+        rootfsDir.setWritable(true, false);
+        rootfsDir.setExecutable(true, false);
+
+        binDir.setReadable(true, false);
+        binDir.setWritable(true, false);
         binDir.setExecutable(true, false);
+
+        tmpDir.setReadable(true, false);
+        tmpDir.setWritable(true, false);
+        tmpDir.setExecutable(true, false);
+
+        // Verify we can write to rootfs
+        File testFile = new File(rootfsDir, ".write_test");
+        if (!testFile.createNewFile()) {
+            throw new IOException("Cannot write to rootfs directory: " + rootfsDir);
+        }
+        testFile.delete();
+
+        Log.i(TAG, "All directories created and verified writable");
     }
 
     private void extractProot() throws IOException {
@@ -307,6 +339,8 @@ public class LinuxEnvironment {
     }
 
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
+        Log.i(TAG, "Starting Java-based extraction to " + destDir.getAbsolutePath());
+
         // Manual extraction using Java with larger buffer
         FileInputStream fis = new FileInputStream(tarGzFile);
         BufferedInputStream bis = new BufferedInputStream(fis, 65536);
@@ -314,6 +348,7 @@ public class LinuxEnvironment {
         TarInputStream tarIn = new TarInputStream(gzIn);
 
         int fileCount = 0;
+        int dirCount = 0;
         TarEntry entry;
 
         try {
@@ -330,30 +365,58 @@ public class LinuxEnvironment {
                 File outFile = new File(destDir, name);
 
                 if (entry.isDirectory()) {
-                    outFile.mkdirs();
+                    if (!outFile.exists()) {
+                        if (!outFile.mkdirs()) {
+                            Log.w(TAG, "Could not create directory: " + outFile);
+                        }
+                    }
+                    // Set permissions on directory
+                    outFile.setReadable(true, false);
+                    outFile.setWritable(true, false);
+                    outFile.setExecutable(true, false);
+                    dirCount++;
                 } else {
-                    outFile.getParentFile().mkdirs();
-                    FileOutputStream out = new FileOutputStream(outFile);
-                    try {
-                        tarIn.copyEntryContents(out);
-                    } finally {
-                        out.close();
+                    // Ensure parent directory exists with proper permissions
+                    File parentDir = outFile.getParentFile();
+                    if (!parentDir.exists()) {
+                        if (!parentDir.mkdirs()) {
+                            throw new IOException("Cannot create parent dir: " + parentDir);
+                        }
+                        parentDir.setReadable(true, false);
+                        parentDir.setWritable(true, false);
+                        parentDir.setExecutable(true, false);
                     }
 
+                    // Extract file
+                    try {
+                        FileOutputStream out = new FileOutputStream(outFile);
+                        try {
+                            tarIn.copyEntryContents(out);
+                        } finally {
+                            out.close();
+                        }
+                    } catch (IOException e) {
+                        Log.e(TAG, "Failed to extract " + name + ": " + e.getMessage());
+                        throw new IOException("Cannot extract " + name + ": " + e.getMessage());
+                    }
+
+                    // Set permissions
+                    outFile.setReadable(true, false);
                     if (name.startsWith("bin/") ||
                         name.startsWith("sbin/") ||
                         name.startsWith("usr/bin/") ||
-                        name.startsWith("usr/sbin/")) {
+                        name.startsWith("usr/sbin/") ||
+                        name.endsWith(".sh")) {
                         outFile.setExecutable(true, false);
                     }
+                    fileCount++;
                 }
 
-                fileCount++;
-                if (fileCount % 100 == 0) {
-                    Log.d(TAG, "Extracted " + fileCount + " files...");
+                if ((fileCount + dirCount) % 200 == 0) {
+                    Log.d(TAG, "Extracted " + fileCount + " files, " + dirCount + " dirs...");
                 }
             }
-            Log.i(TAG, "Extraction complete: " + fileCount + " files");
+            Log.i(TAG, "Extraction complete: " + fileCount + " files, " + dirCount + " directories");
         } finally {
             tarIn.close();
         }
