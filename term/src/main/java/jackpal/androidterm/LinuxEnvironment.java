@@ -8,6 +8,8 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.zip.GZIPInputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 
 /**
  * Manages the Linux environment (Alpine Linux via PRoot)
@@ -210,54 +212,101 @@ public class LinuxEnvironment {
     }
 
     private void extractTarGz(File tarGzFile, File destDir) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder(
-            "/system/bin/tar",
-            "-xzf",
-            tarGzFile.getAbsolutePath(),
-            "-C",
-            destDir.getAbsolutePath()
-        );
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
+        Log.i(TAG, "Starting extraction of " + tarGzFile.getAbsolutePath());
 
-        try {
-            int exitCode = p.waitFor();
-            if (exitCode != 0) {
-                // Try with busybox or alternative
-                extractTarGzFallback(tarGzFile, destDir);
+        // Try system tar first
+        boolean systemTarWorked = false;
+        String[] tarCommands = {"/system/bin/tar", "/system/bin/toybox tar", "tar"};
+
+        for (String tarCmd : tarCommands) {
+            try {
+                File tarBin = new File(tarCmd.split(" ")[0]);
+                if (!tarBin.exists() && !tarCmd.equals("tar")) continue;
+
+                Log.i(TAG, "Trying: " + tarCmd);
+                ProcessBuilder pb = new ProcessBuilder(
+                    "sh", "-c",
+                    tarCmd + " -xzf " + tarGzFile.getAbsolutePath() + " -C " + destDir.getAbsolutePath()
+                );
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+
+                // Read output to prevent blocking
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    Log.d(TAG, "tar: " + line);
+                }
+
+                int exitCode = p.waitFor();
+                if (exitCode == 0) {
+                    Log.i(TAG, "System tar succeeded");
+                    systemTarWorked = true;
+                    break;
+                }
+                Log.w(TAG, "tar exited with code " + exitCode);
+            } catch (Exception e) {
+                Log.w(TAG, "tar failed: " + e.getMessage());
             }
-        } catch (InterruptedException e) {
-            throw new IOException("Extraction interrupted");
+        }
+
+        if (!systemTarWorked) {
+            Log.i(TAG, "Falling back to Java extraction");
+            extractTarGzFallback(tarGzFile, destDir);
         }
     }
 
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
-        // Manual extraction using Java
-        GZIPInputStream gzIn = new GZIPInputStream(new FileInputStream(tarGzFile));
+        // Manual extraction using Java with larger buffer
+        FileInputStream fis = new FileInputStream(tarGzFile);
+        BufferedInputStream bis = new BufferedInputStream(fis, 65536);
+        GZIPInputStream gzIn = new GZIPInputStream(bis, 65536);
         TarInputStream tarIn = new TarInputStream(gzIn);
 
+        int fileCount = 0;
         TarEntry entry;
-        while ((entry = tarIn.getNextEntry()) != null) {
-            File outFile = new File(destDir, entry.getName());
 
-            if (entry.isDirectory()) {
-                outFile.mkdirs();
-            } else {
-                outFile.getParentFile().mkdirs();
-                FileOutputStream out = new FileOutputStream(outFile);
-                tarIn.copyEntryContents(out);
-                out.close();
+        try {
+            while ((entry = tarIn.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (name == null || name.isEmpty()) continue;
 
-                if (entry.getName().startsWith("bin/") ||
-                    entry.getName().startsWith("sbin/") ||
-                    entry.getName().startsWith("usr/bin/") ||
-                    entry.getName().startsWith("usr/sbin/")) {
-                    outFile.setExecutable(true, false);
+                // Security: prevent path traversal
+                if (name.contains("..")) {
+                    Log.w(TAG, "Skipping suspicious entry: " + name);
+                    continue;
+                }
+
+                File outFile = new File(destDir, name);
+
+                if (entry.isDirectory()) {
+                    outFile.mkdirs();
+                } else {
+                    outFile.getParentFile().mkdirs();
+                    FileOutputStream out = new FileOutputStream(outFile);
+                    try {
+                        tarIn.copyEntryContents(out);
+                    } finally {
+                        out.close();
+                    }
+
+                    if (name.startsWith("bin/") ||
+                        name.startsWith("sbin/") ||
+                        name.startsWith("usr/bin/") ||
+                        name.startsWith("usr/sbin/")) {
+                        outFile.setExecutable(true, false);
+                    }
+                }
+
+                fileCount++;
+                if (fileCount % 100 == 0) {
+                    Log.d(TAG, "Extracted " + fileCount + " files...");
                 }
             }
+            Log.i(TAG, "Extraction complete: " + fileCount + " files");
+        } finally {
+            tarIn.close();
         }
-
-        tarIn.close();
     }
 
     private void configureEnvironment() throws IOException {
