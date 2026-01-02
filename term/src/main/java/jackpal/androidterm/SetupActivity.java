@@ -2,14 +2,17 @@ package jackpal.androidterm;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.Button;
 import android.graphics.Color;
@@ -29,12 +32,21 @@ public class SetupActivity extends Activity {
     private Button retryButton;
     private Handler handler;
     private LinuxEnvironment linuxEnv;
+    private PowerManager.WakeLock wakeLock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // Request window features BEFORE super.onCreate()
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
+
+        // Keep screen on and prevent sleep during setup
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        // Acquire wake lock to prevent CPU sleep
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AndroidAICLI:SetupWakeLock");
+        wakeLock.acquire(30 * 60 * 1000L); // 30 minutes max
 
         try {
             handler = new Handler(Looper.getMainLooper());
@@ -180,9 +192,22 @@ public class SetupActivity extends Activity {
     }
 
     private void launchTerminal() {
+        releaseWakeLock();
         Intent intent = new Intent(this, Term.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(intent);
         finish();
+    }
+
+    private void releaseWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        releaseWakeLock();
+        super.onDestroy();
     }
 }

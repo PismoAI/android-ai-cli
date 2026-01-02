@@ -1,15 +1,24 @@
 package jackpal.androidterm;
 
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.util.Log;
 
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.zip.GZIPInputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Manages the Linux environment (Alpine Linux via PRoot)
@@ -176,32 +185,57 @@ public class LinuxEnvironment {
     private void downloadAlpine(SetupCallback callback) throws IOException {
         File tarFile = new File(baseDir, "alpine.tar.gz");
 
-        // Download
+        Log.i(TAG, "Starting download from " + ALPINE_URL);
+
+        // Download with larger buffer and less frequent updates
         URL url = new URL(ALPINE_URL);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(60000);
+        conn.setConnectTimeout(60000);
+        conn.setReadTimeout(120000);
+        conn.setRequestProperty("User-Agent", "Android AI CLI");
+
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new IOException("HTTP error: " + responseCode);
+        }
 
         int fileSize = conn.getContentLength();
-        InputStream in = conn.getInputStream();
-        FileOutputStream out = new FileOutputStream(tarFile);
+        Log.i(TAG, "Download size: " + fileSize + " bytes");
 
-        byte[] buffer = new byte[8192];
+        InputStream in = new BufferedInputStream(conn.getInputStream(), 65536);
+        FileOutputStream fos = new FileOutputStream(tarFile);
+        BufferedOutputStream out = new BufferedOutputStream(fos, 65536);
+
+        byte[] buffer = new byte[32768]; // Larger buffer
         int len;
         long downloaded = 0;
+        int lastPercent = 20;
 
         while ((len = in.read(buffer)) > 0) {
             out.write(buffer, 0, len);
             downloaded += len;
+
+            // Update progress less frequently (every ~100KB)
             if (fileSize > 0) {
                 int percent = 20 + (int) ((downloaded * 50) / fileSize);
-                callback.onProgress("Downloading Alpine Linux...", Math.min(percent, 70));
+                if (percent > lastPercent) {
+                    lastPercent = percent;
+                    callback.onProgress("Downloading... " + (downloaded / 1024) + "KB", Math.min(percent, 70));
+                }
             }
         }
 
-        in.close();
+        out.flush();
         out.close();
+        in.close();
         conn.disconnect();
+
+        Log.i(TAG, "Download complete: " + downloaded + " bytes");
+
+        // Verify download
+        if (tarFile.length() < 1000000) { // Alpine rootfs should be > 1MB
+            throw new IOException("Download incomplete: only " + tarFile.length() + " bytes");
+        }
 
         // Extract
         callback.onProgress("Extracting Alpine Linux...", 75);
