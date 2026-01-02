@@ -356,6 +356,10 @@ public class LinuxEnvironment {
         long size;
         byte type;
 
+        String getName() {
+            return name;
+        }
+
         TarEntry(byte[] header) {
             // Name: bytes 0-99
             StringBuilder sb = new StringBuilder();
