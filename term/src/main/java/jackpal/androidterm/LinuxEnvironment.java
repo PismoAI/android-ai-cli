@@ -116,15 +116,121 @@ public class LinuxEnvironment {
     }
 
     /**
+     * NUCLEAR cleanup - the most aggressive possible cleanup for stuck files
+     * Call this before setup() if previous attempts failed
+     */
+    public void nuclearCleanup() {
+        Log.i(TAG, "=== NUCLEAR CLEANUP STARTING ===");
+        String basePath = baseDir.getAbsolutePath();
+
+        // Method 1: Try to chmod everything writable first
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                "chmod -R 777 '" + basePath + "' 2>/dev/null || true");
+            pb.start().waitFor();
+            Log.i(TAG, "chmod -R 777 attempted");
+        } catch (Exception e) {
+            Log.w(TAG, "chmod failed: " + e.getMessage());
+        }
+
+        // Method 2: Delete all symlinks first (they cause EROFS)
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                "find '" + basePath + "' -type l -delete 2>/dev/null || true");
+            pb.start().waitFor();
+            Log.i(TAG, "Deleted symlinks");
+        } catch (Exception e) {
+            Log.w(TAG, "symlink delete failed: " + e.getMessage());
+        }
+
+        // Method 3: Delete all regular files
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                "find '" + basePath + "' -type f -delete 2>/dev/null || true");
+            pb.start().waitFor();
+            Log.i(TAG, "Deleted regular files");
+        } catch (Exception e) {
+            Log.w(TAG, "file delete failed: " + e.getMessage());
+        }
+
+        // Method 4: Remove all directories bottom-up
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                "find '" + basePath + "' -type d -depth -delete 2>/dev/null || true");
+            pb.start().waitFor();
+            Log.i(TAG, "Deleted directories");
+        } catch (Exception e) {
+            Log.w(TAG, "dir delete failed: " + e.getMessage());
+        }
+
+        // Method 5: Nuclear rm -rf
+        try {
+            ProcessBuilder pb = new ProcessBuilder("rm", "-rf", basePath);
+            pb.start().waitFor();
+            Log.i(TAG, "rm -rf attempted");
+        } catch (Exception e) {
+            Log.w(TAG, "rm -rf failed: " + e.getMessage());
+        }
+
+        // Method 6: Try again with shell
+        try {
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c", "rm -rf '" + basePath + "'");
+            pb.start().waitFor();
+        } catch (Exception e) {
+            Log.w(TAG, "shell rm -rf failed: " + e.getMessage());
+        }
+
+        // Method 7: Java recursive delete as final fallback
+        deleteRecursive(baseDir);
+
+        // Method 8: If STILL exists, try to at least clear the rootfs
+        File rootfs = new File(baseDir, "rootfs");
+        if (rootfs.exists()) {
+            Log.w(TAG, "baseDir still exists, trying to clear rootfs specifically");
+            try {
+                ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                    "chmod -R 777 '" + rootfs.getAbsolutePath() + "' 2>/dev/null; " +
+                    "rm -rf '" + rootfs.getAbsolutePath() + "' 2>/dev/null");
+                pb.start().waitFor();
+            } catch (Exception e) {
+                Log.w(TAG, "rootfs cleanup failed: " + e.getMessage());
+            }
+            deleteRecursive(rootfs);
+        }
+
+        // Final check
+        if (baseDir.exists()) {
+            Log.e(TAG, "WARNING: Could not fully clean " + basePath + " - files may remain");
+            // List what's left
+            try {
+                ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                    "find '" + basePath + "' -ls 2>/dev/null | head -50");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    Log.w(TAG, "Remaining: " + line);
+                }
+                p.waitFor();
+            } catch (Exception e) {
+                // ignore
+            }
+        } else {
+            Log.i(TAG, "=== NUCLEAR CLEANUP SUCCESSFUL ===");
+        }
+    }
+
+    /**
      * Set up the Linux environment (call from background thread)
      */
     public void setup(SetupCallback callback) {
         String currentStep = "initializing";
         try {
-            // Reset any previous failed attempt
-            currentStep = "resetting previous attempt";
-            callback.onProgress("Cleaning up...", 2);
-            reset();
+            // NUCLEAR cleanup - aggressively remove any previous failed attempt
+            currentStep = "nuclear cleanup";
+            callback.onProgress("Nuclear cleanup...", 2);
+            nuclearCleanup();
 
             currentStep = "creating directories";
             callback.onProgress("Creating directories...", 5);
@@ -417,8 +523,17 @@ public class LinuxEnvironment {
                         outFile.delete();
                     }
 
-                    // Extract file
+                    // Extract file - with aggressive pre-cleanup
                     try {
+                        // ALWAYS force delete before creating - handles broken symlinks
+                        forceDelete(outFile);
+
+                        // Double-check parent is writable
+                        if (!parentDir.canWrite()) {
+                            Log.w(TAG, "Parent not writable, forcing: " + parentDir);
+                            parentDir.setWritable(true, false);
+                        }
+
                         FileOutputStream out = new FileOutputStream(outFile);
                         try {
                             tarIn.copyEntryContents(out);
@@ -426,8 +541,28 @@ public class LinuxEnvironment {
                             out.close();
                         }
                     } catch (IOException e) {
-                        Log.e(TAG, "Failed to extract " + name + ": " + e.getMessage());
-                        throw new IOException("Cannot extract " + name + ": " + e.getMessage());
+                        // Log detailed debug info
+                        Log.e(TAG, "=== EXTRACTION FAILED ===");
+                        Log.e(TAG, "File: " + name);
+                        Log.e(TAG, "Full path: " + outFile.getAbsolutePath());
+                        Log.e(TAG, "Parent exists: " + parentDir.exists());
+                        Log.e(TAG, "Parent writable: " + parentDir.canWrite());
+                        Log.e(TAG, "File exists: " + outFile.exists());
+                        Log.e(TAG, "Error: " + e.getMessage());
+
+                        // Try one more time with shell deletion
+                        try {
+                            ProcessBuilder pb = new ProcessBuilder("rm", "-f", outFile.getAbsolutePath());
+                            pb.start().waitFor();
+                            // Retry
+                            FileOutputStream out = new FileOutputStream(outFile);
+                            tarIn.copyEntryContents(out);
+                            out.close();
+                            Log.i(TAG, "Retry succeeded for: " + name);
+                        } catch (Exception e2) {
+                            Log.e(TAG, "Retry also failed: " + e2.getMessage());
+                            throw new IOException(outFile.getAbsolutePath() + ": " + e.getMessage());
+                        }
                     }
 
                     // Set permissions
