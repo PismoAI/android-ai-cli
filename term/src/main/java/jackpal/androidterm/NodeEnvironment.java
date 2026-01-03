@@ -175,10 +175,41 @@ public class NodeEnvironment {
         xzIn.close();
         out.close();
 
+        // Set executable permission - try multiple methods
         nodeBinary.setExecutable(true, false);
         nodeBinary.setReadable(true, false);
+        nodeBinary.setWritable(true, false);
+
+        // If setExecutable failed, try chmod via shell
+        if (!nodeBinary.canExecute()) {
+            Log.w(TAG, "setExecutable() failed, trying chmod...");
+            try {
+                ProcessBuilder pb = new ProcessBuilder("chmod", "755", nodeBinary.getAbsolutePath());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                int exitCode = p.waitFor();
+                Log.i(TAG, "chmod exit code: " + exitCode);
+            } catch (Exception e) {
+                Log.w(TAG, "chmod failed: " + e.getMessage());
+            }
+        }
+
+        // Try again with Runtime.exec as another fallback
+        if (!nodeBinary.canExecute()) {
+            Log.w(TAG, "Still not executable, trying Runtime.exec chmod...");
+            try {
+                Runtime.getRuntime().exec("chmod 755 " + nodeBinary.getAbsolutePath()).waitFor();
+            } catch (Exception e) {
+                Log.w(TAG, "Runtime chmod failed: " + e.getMessage());
+            }
+        }
 
         Log.i(TAG, "Extracted node: " + total + " bytes, executable: " + nodeBinary.canExecute());
+
+        // Final check - if still not executable, throw error
+        if (!nodeBinary.canExecute()) {
+            throw new IOException("Failed to set node binary as executable. Path: " + nodeBinary.getAbsolutePath());
+        }
 
         // Verify it works
         try {
