@@ -42,10 +42,10 @@ public class AssetExtractor {
     }
 
     /**
-     * Get the busybox binary path
+     * Get the busybox binary path (inside Alpine rootfs)
      */
     public File getBusyboxBinary() {
-        return new File(filesDir, "busybox");
+        return new File(getRootfsDir(), "bin/busybox");
     }
 
     /**
@@ -57,15 +57,15 @@ public class AssetExtractor {
 
     /**
      * Check if all required assets are extracted
+     * Note: We don't check for busybox - Alpine has it built-in at /bin/busybox
      */
     public boolean isExtracted() {
         File proot = getProotBinary();
-        File busybox = getBusyboxBinary();
         File rootfs = getRootfsDir();
         File sh = new File(rootfs, "bin/sh");
 
+        // Only check proot and rootfs - Alpine has busybox built-in
         return proot.exists() && proot.canExecute() &&
-               busybox.exists() && busybox.canExecute() &&
                rootfs.exists() && sh.exists();
     }
 
@@ -77,11 +77,7 @@ public class AssetExtractor {
         callback.onProgress("Extracting proot...");
         extractBinary("proot", getProotBinary());
 
-        // Extract busybox
-        callback.onProgress("Extracting busybox...");
-        extractBusybox(callback);
-
-        // Extract Alpine rootfs
+        // Extract Alpine rootfs (includes busybox at /bin/busybox)
         callback.onProgress("Extracting Alpine rootfs...");
         extractRootfs(callback);
 
@@ -109,43 +105,6 @@ public class AssetExtractor {
         }
 
         Log.i(TAG, "Extracted: " + dest + " (size: " + dest.length() + ")");
-    }
-
-    /**
-     * Extract busybox from a tar.gz asset
-     * Handles hardlinks properly (the key fix!)
-     */
-    private void extractBusybox(ExtractCallback callback) throws IOException {
-        File busybox = getBusyboxBinary();
-
-        // Try to extract from tar.gz first (contains symlinks/hardlinks for all applets)
-        AssetManager assets = context.getAssets();
-        String[] assetList;
-        try {
-            assetList = assets.list("");
-        } catch (IOException e) {
-            assetList = new String[0];
-        }
-
-        boolean hasTarGz = false;
-        for (String asset : assetList) {
-            if (asset.equals("busybox.tar.gz") || asset.equals("busybox.tar")) {
-                hasTarGz = true;
-                break;
-            }
-        }
-
-        if (hasTarGz) {
-            extractTarGz("busybox.tar.gz", filesDir, callback);
-        } else {
-            // Fall back to raw binary
-            extractBinary("busybox", busybox);
-        }
-
-        // Ensure executable
-        if (busybox.exists()) {
-            busybox.setExecutable(true, false);
-        }
     }
 
     /**
