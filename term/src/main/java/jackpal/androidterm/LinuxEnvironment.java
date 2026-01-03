@@ -33,8 +33,6 @@ public class LinuxEnvironment {
     // Alpine Linux minirootfs URL (arm64)
     private static final String ALPINE_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.0-aarch64.tar.gz";
 
-    // Static busybox binary (fallback when extraction fails due to hardlinks)
-    private static final String BUSYBOX_URL = "https://busybox.net/downloads/binaries/1.35.0-arm64-linux-musl/busybox";
 
     private final Context context;
     private final File baseDir;
@@ -448,8 +446,8 @@ public class LinuxEnvironment {
         prootBinary.setExecutable(true, false);
     }
 
-    private void downloadBusybox(File busyboxFile) throws IOException {
-        Log.i(TAG, "Downloading static busybox from " + BUSYBOX_URL);
+    private void extractBusybox(File busyboxFile) throws IOException {
+        Log.i(TAG, "Extracting busybox from assets");
 
         // Ensure parent directory exists
         File parentDir = busyboxFile.getParentFile();
@@ -460,19 +458,7 @@ public class LinuxEnvironment {
             parentDir.setExecutable(true, false);
         }
 
-        URL url = new URL(BUSYBOX_URL);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(60000);
-        conn.setRequestProperty("User-Agent", "Android AI CLI");
-        conn.setInstanceFollowRedirects(true);
-
-        int responseCode = conn.getResponseCode();
-        if (responseCode != 200) {
-            throw new IOException("Failed to download busybox: HTTP " + responseCode);
-        }
-
-        InputStream in = new BufferedInputStream(conn.getInputStream(), 8192);
+        InputStream in = context.getAssets().open("bin/busybox-aarch64");
         FileOutputStream out = new FileOutputStream(busyboxFile);
 
         byte[] buffer = new byte[8192];
@@ -485,11 +471,10 @@ public class LinuxEnvironment {
 
         in.close();
         out.close();
-        conn.disconnect();
 
         busyboxFile.setExecutable(true, false);
         busyboxFile.setReadable(true, false);
-        Log.i(TAG, "Downloaded busybox: " + total + " bytes");
+        Log.i(TAG, "Extracted busybox: " + total + " bytes");
     }
 
     private void downloadAlpine(SetupCallback callback) throws IOException {
@@ -800,14 +785,14 @@ public class LinuxEnvironment {
         Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + (busybox.exists() ? busybox.length() : 0));
         Log.i(TAG, "sh exists: " + sh.exists());
 
-        // Download busybox if missing or empty (hardlink extraction can result in 0-byte files)
+        // Extract busybox from assets if missing or empty (hardlink extraction can result in 0-byte files)
         if (!busybox.exists() || busybox.length() == 0) {
-            Log.w(TAG, "busybox not found or empty, downloading static binary...");
+            Log.w(TAG, "busybox not found or empty, extracting from assets...");
             try {
-                downloadBusybox(busybox);
+                extractBusybox(busybox);
             } catch (IOException e) {
-                Log.e(TAG, "Failed to download busybox: " + e.getMessage());
-                throw new IOException("busybox not found and download failed: " + e.getMessage());
+                Log.e(TAG, "Failed to extract busybox: " + e.getMessage());
+                throw new IOException("busybox not found and extraction failed: " + e.getMessage());
             }
         }
         // Make busybox executable
