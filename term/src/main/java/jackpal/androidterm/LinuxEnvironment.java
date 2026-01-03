@@ -579,14 +579,37 @@ public class LinuxEnvironment {
                     continue;
                 }
 
-                // SKIP all bin/* entries - we'll create them manually from busybox
-                // This avoids EROFS errors on symlinks like bin/sh -> busybox
-                if (name.startsWith("bin/") && !name.equals("bin/busybox")) {
-                    Log.d(TAG, "Skipping bin entry (will create from busybox): " + name);
-                    if (!entry.isDirectory()) {
-                        symlinkCount++; // Count as skipped
+                // Normalize the entry name for checking
+                String normalizedName = name.startsWith("/") ? name.substring(1) : name;
+
+                // SKIP ALL bin and sbin entries - including the directories themselves!
+                // We'll create bin/ and sbin/ directories fresh with proper Android permissions
+                // This avoids inheriting any weird attributes from the Alpine tarball
+                if (normalizedName.equals("bin") || normalizedName.equals("bin/") ||
+                    normalizedName.equals("sbin") || normalizedName.equals("sbin/") ||
+                    normalizedName.startsWith("bin/") || normalizedName.startsWith("sbin/")) {
+                    // Only keep bin/busybox - we need this binary
+                    if (!normalizedName.equals("bin/busybox")) {
+                        Log.d(TAG, "Skipping bin/sbin entry: " + name);
+                        if (!entry.isDirectory()) {
+                            symlinkCount++; // Count as skipped
+                        }
+                        continue;
                     }
-                    continue;
+                    // For bin/busybox, we need to ensure bin/ directory exists first
+                    Log.d(TAG, "Will extract busybox - ensuring bin/ dir exists");
+                    File binDirForBusybox = new File(destDir, "bin");
+                    if (!binDirForBusybox.exists()) {
+                        binDirForBusybox.mkdirs();
+                        binDirForBusybox.setReadable(true, false);
+                        binDirForBusybox.setWritable(true, false);
+                        binDirForBusybox.setExecutable(true, false);
+                    }
+                }
+
+                // Log what we're extracting for debugging
+                if (fileCount < 20 || fileCount % 100 == 0) {
+                    Log.d(TAG, "Extracting: " + name + " (type=" + (entry.isDirectory() ? "dir" : entry.isSymlink() ? "symlink" : "file") + ")");
                 }
 
                 File outFile = new File(destDir, name);
@@ -692,11 +715,31 @@ public class LinuxEnvironment {
 
     private void createCriticalSymlinks(File destDir) throws IOException {
         File binDir = new File(destDir, "bin");
+        File sbinDir = new File(destDir, "sbin");
         File busybox = new File(binDir, "busybox");
         File sh = new File(binDir, "sh");
 
-        Log.i(TAG, "Checking critical symlinks...");
-        Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + busybox.length());
+        Log.i(TAG, "=== Creating critical symlinks ===");
+
+        // CRITICAL: Ensure bin/ and sbin/ directories exist with FULL permissions
+        // Since we skipped extracting them from the tarball, we need to create them fresh
+        Log.i(TAG, "Creating/verifying bin directory with full permissions...");
+        if (!binDir.exists()) {
+            binDir.mkdirs();
+        }
+        binDir.setReadable(true, false);
+        binDir.setWritable(true, false);
+        binDir.setExecutable(true, false);
+
+        if (!sbinDir.exists()) {
+            sbinDir.mkdirs();
+        }
+        sbinDir.setReadable(true, false);
+        sbinDir.setWritable(true, false);
+        sbinDir.setExecutable(true, false);
+
+        Log.i(TAG, "binDir exists: " + binDir.exists() + ", writable: " + binDir.canWrite());
+        Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + (busybox.exists() ? busybox.length() : 0));
         Log.i(TAG, "sh exists: " + sh.exists());
 
         if (!busybox.exists()) {
@@ -773,8 +816,36 @@ public class LinuxEnvironment {
                 Log.w(TAG, "Direct busybox --install failed: " + e.getMessage());
             }
 
-            // Last resort: copy busybox to sh (this was causing EROFS but let's try anyway)
+            // Last resort: copy busybox to sh
             Log.i(TAG, "Last resort: copying busybox to sh");
+
+            // First verify we can write to binDir
+            File testFile = new File(binDir, ".write_test_" + System.currentTimeMillis());
+            try {
+                FileOutputStream testOut = new FileOutputStream(testFile);
+                testOut.write("test".getBytes());
+                testOut.close();
+                testFile.delete();
+                Log.i(TAG, "binDir write test PASSED");
+            } catch (Exception e) {
+                Log.e(TAG, "binDir write test FAILED: " + e.getMessage());
+                // Try recreating binDir entirely
+                Log.i(TAG, "Attempting to recreate binDir...");
+                try {
+                    deleteRecursiveWithShell(binDir);
+                    binDir.mkdirs();
+                    binDir.setReadable(true, false);
+                    binDir.setWritable(true, false);
+                    binDir.setExecutable(true, false);
+                    Log.i(TAG, "Recreated binDir");
+                } catch (Exception e2) {
+                    Log.e(TAG, "Failed to recreate binDir: " + e2.getMessage());
+                }
+            }
+
+            // Force delete sh before copying (handles broken symlinks, etc.)
+            forceDelete(sh);
+
             try {
                 copyFile(busybox, sh);
                 sh.setExecutable(true, false);
