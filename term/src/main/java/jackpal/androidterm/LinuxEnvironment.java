@@ -524,6 +524,10 @@ public class LinuxEnvironment {
         if (!parentDir.exists()) {
             parentDir.mkdirs();
         }
+        parentDir.setWritable(true, false);
+
+        // Delete any existing file/symlink first to prevent EROFS errors
+        forceDelete(linkFile);
 
         // Try to create symlink using Java NIO (Android 8+)
         if (Build.VERSION.SDK_INT >= 26) {
@@ -533,6 +537,8 @@ public class LinuxEnvironment {
                 return;
             } catch (Exception e) {
                 Log.w(TAG, "NIO symlink failed for " + linkPath + ": " + e.getMessage());
+                // Delete failed symlink attempt
+                forceDelete(linkFile);
             }
         }
 
@@ -546,8 +552,11 @@ public class LinuxEnvironment {
                 Log.d(TAG, "Created symlink via ln: " + linkPath + " -> " + target);
                 return;
             }
+            // Delete failed symlink attempt
+            forceDelete(linkFile);
         } catch (Exception e) {
             Log.w(TAG, "ln symlink failed for " + linkPath + ": " + e.getMessage());
+            forceDelete(linkFile);
         }
 
         // Fallback: if target is a file and exists, copy it
