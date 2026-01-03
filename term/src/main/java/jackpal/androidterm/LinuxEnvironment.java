@@ -493,53 +493,55 @@ public class LinuxEnvironment {
         // Make busybox executable
         busybox.setExecutable(true, false);
 
-        // If /bin/sh doesn't exist, we need to create it
-        if (!sh.exists()) {
-            Log.i(TAG, "Creating /bin/sh -> busybox using busybox --install");
+        // Delete any broken symlinks first (exists() returns false for broken symlinks)
+        deleteIfExists(sh);
 
-            // Try busybox --install first
-            try {
-                ProcessBuilder pb = new ProcessBuilder(
-                    busybox.getAbsolutePath(), "--install", "-s", binDir.getAbsolutePath()
-                );
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
+        Log.i(TAG, "Creating /bin/sh -> busybox using busybox --install");
 
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Log.d(TAG, "busybox install: " + line);
-                }
+        // Try busybox --install first
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                busybox.getAbsolutePath(), "--install", "-s", binDir.getAbsolutePath()
+            );
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
 
-                int exitCode = p.waitFor();
-                Log.i(TAG, "busybox --install exit code: " + exitCode);
-
-                if (sh.exists()) {
-                    Log.i(TAG, "busybox --install succeeded, /bin/sh created");
-                    return;
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "busybox --install failed: " + e.getMessage());
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                Log.d(TAG, "busybox install: " + line);
             }
 
-            // Fallback: copy busybox to sh
-            Log.i(TAG, "Falling back to copying busybox to sh");
-            copyFile(busybox, sh);
-            sh.setExecutable(true, false);
+            int exitCode = p.waitFor();
+            Log.i(TAG, "busybox --install exit code: " + exitCode);
 
             if (sh.exists()) {
-                Log.i(TAG, "Created /bin/sh by copying busybox");
-            } else {
-                throw new IOException("Failed to create /bin/sh");
+                Log.i(TAG, "busybox --install succeeded, /bin/sh created");
+                return;
             }
+        } catch (Exception e) {
+            Log.w(TAG, "busybox --install failed: " + e.getMessage());
+        }
+
+        // Fallback: copy busybox to sh
+        Log.i(TAG, "Falling back to copying busybox to sh");
+        deleteIfExists(sh);  // Delete again in case busybox --install created a broken symlink
+        copyFile(busybox, sh);
+        sh.setExecutable(true, false);
+
+        if (sh.exists()) {
+            Log.i(TAG, "Created /bin/sh by copying busybox");
+        } else {
+            throw new IOException("Failed to create /bin/sh");
         }
 
         // Also ensure other critical symlinks exist
         String[] criticalLinks = {"ash", "ls", "cat", "cp", "mv", "rm", "mkdir", "chmod", "chown", "ln", "env", "which", "pwd", "echo", "test", "true", "false"};
         for (String cmd : criticalLinks) {
             File cmdFile = new File(binDir, cmd);
-            if (!cmdFile.exists()) {
+            if (!cmdFile.exists() || !cmdFile.canExecute()) {
                 try {
+                    deleteIfExists(cmdFile);  // Remove broken symlinks
                     copyFile(busybox, cmdFile);
                     cmdFile.setExecutable(true, false);
                 } catch (Exception e) {
@@ -559,18 +561,10 @@ public class LinuxEnvironment {
             parentDir.mkdirs();
         }
 
-        // Try to create symlink using Java NIO (Android 8+)
-        if (Build.VERSION.SDK_INT >= 26) {
-            try {
-                Files.createSymbolicLink(linkFile.toPath(), Paths.get(target));
-                Log.d(TAG, "Created symlink: " + linkPath + " -> " + target);
-                return;
-            } catch (Exception e) {
-                Log.w(TAG, "NIO symlink failed for " + linkPath + ": " + e.getMessage());
-            }
-        }
+        // Delete any existing file/broken symlink first
+        deleteIfExists(linkFile);
 
-        // Try using ln -s command
+        // Try using ln -s command first (more reliable on Android)
         try {
             ProcessBuilder pb = new ProcessBuilder("ln", "-sf", target, linkFile.getAbsolutePath());
             pb.redirectErrorStream(true);
@@ -584,6 +578,18 @@ public class LinuxEnvironment {
             Log.w(TAG, "ln symlink failed for " + linkPath + ": " + e.getMessage());
         }
 
+        // Try to create symlink using Java NIO (Android 8+)
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                deleteIfExists(linkFile);  // Clean up again
+                Files.createSymbolicLink(linkFile.toPath(), Paths.get(target));
+                Log.d(TAG, "Created symlink: " + linkPath + " -> " + target);
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "NIO symlink failed for " + linkPath + ": " + e.getMessage());
+            }
+        }
+
         // Fallback: if target is a file and exists, copy it
         File targetFile = new File(destDir, target);
         if (!targetFile.isAbsolute()) {
@@ -592,6 +598,7 @@ public class LinuxEnvironment {
 
         if (targetFile.exists() && targetFile.isFile()) {
             try {
+                deleteIfExists(linkFile);  // Clean up before copy
                 copyFile(targetFile, linkFile);
                 linkFile.setExecutable(targetFile.canExecute(), false);
                 Log.d(TAG, "Copied instead of symlink: " + linkPath + " <- " + target);
@@ -605,6 +612,7 @@ public class LinuxEnvironment {
         if (linkPath.startsWith("bin/") || linkPath.startsWith("usr/bin/") ||
             linkPath.startsWith("sbin/") || linkPath.startsWith("usr/sbin/")) {
             try {
+                deleteIfExists(linkFile);  // Clean up before writing
                 FileWriter fw = new FileWriter(linkFile);
                 fw.write("#!/bin/sh\nexec " + target + " \"$@\"\n");
                 fw.close();
@@ -626,6 +634,28 @@ public class LinuxEnvironment {
         }
         in.close();
         out.close();
+    }
+
+    /**
+     * Delete a file or symlink if it exists.
+     * Uses both Java File.delete() and shell rm command to handle broken symlinks.
+     */
+    private void deleteIfExists(File file) {
+        // Try Java delete first
+        if (file.exists()) {
+            file.setWritable(true, false);
+            file.delete();
+        }
+
+        // Also try shell rm to handle broken symlinks (which Java can't see)
+        try {
+            ProcessBuilder pb = new ProcessBuilder("rm", "-f", file.getAbsolutePath());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            p.waitFor();
+        } catch (Exception e) {
+            // Ignore - best effort
+        }
     }
 
     private void deleteRecursive(File file) {
