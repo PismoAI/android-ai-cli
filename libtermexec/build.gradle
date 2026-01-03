@@ -42,12 +42,9 @@ android {
     lint {
         abortOnError false
     }
-}
 
-android.libraryVariants.all { variant ->
-    Sync packageAidl = project.tasks.create("addPublic${variant.name.capitalize()}Aidl", Sync) { sync ->
-        from "$project.projectDir/src/main/aidl/"
-        into "$buildDir/intermediates/aidl_source_output_dir/${variant.name}/out/"
+    buildFeatures {
+        aidl true
     }
 }
 
