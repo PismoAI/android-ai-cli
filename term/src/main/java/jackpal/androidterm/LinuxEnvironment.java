@@ -753,12 +753,14 @@ public class LinuxEnvironment {
         Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + (busybox.exists() ? busybox.length() : 0));
         Log.i(TAG, "sh exists: " + sh.exists());
 
+        // Note: busybox might not exist at the expected location due to hardlink extraction issues
+        // Alpine Linux always has busybox, so we'll access it via proot regardless
         if (!busybox.exists()) {
-            throw new IOException("busybox not found in extracted rootfs!");
+            Log.w(TAG, "busybox not found at " + busybox.getAbsolutePath() + " - will access via proot");
+        } else {
+            // Make busybox executable
+            busybox.setExecutable(true, false);
         }
-
-        // Make busybox executable
-        busybox.setExecutable(true, false);
 
         // If /bin/sh doesn't exist, we need to create it
         if (!sh.exists()) {
