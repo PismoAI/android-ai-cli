@@ -222,6 +222,89 @@ public class LinuxEnvironment {
     }
 
     /**
+     * Diagnostic test to verify file operations work before extraction
+     */
+    private void runDiagnosticTest() throws IOException {
+        Log.i(TAG, "=== DIAGNOSTIC TEST STARTING ===");
+
+        // Test 1: Can we create the base directories?
+        Log.i(TAG, "Test 1: Creating directories...");
+        File testDir = new File(baseDir, "rootfs/bin");
+        if (!testDir.exists() && !testDir.mkdirs()) {
+            throw new IOException("DIAG: Cannot create directory: " + testDir);
+        }
+        testDir.setWritable(true, false);
+        testDir.setReadable(true, false);
+        testDir.setExecutable(true, false);
+        Log.i(TAG, "Test 1 PASSED: Created " + testDir);
+
+        // Test 2: Can we create a regular file?
+        Log.i(TAG, "Test 2: Creating regular file...");
+        File testFile = new File(testDir, "test_file_" + System.currentTimeMillis());
+        FileOutputStream fos = new FileOutputStream(testFile);
+        fos.write("test".getBytes());
+        fos.close();
+        Log.i(TAG, "Test 2 PASSED: Created " + testFile);
+        testFile.delete();
+
+        // Test 3: Can we create a file named "sh"?
+        Log.i(TAG, "Test 3: Creating file named 'sh'...");
+        File shFile = new File(testDir, "sh");
+        // First ensure it doesn't exist
+        forceDelete(shFile);
+        // Now try to create it
+        try {
+            FileOutputStream shFos = new FileOutputStream(shFile);
+            shFos.write("#!/bin/sh\necho test\n".getBytes());
+            shFos.close();
+            Log.i(TAG, "Test 3 PASSED: Created " + shFile);
+            shFile.delete();
+        } catch (IOException e) {
+            Log.e(TAG, "Test 3 FAILED: " + e.getMessage());
+            // Try with shell
+            Log.i(TAG, "Test 3b: Trying with shell...");
+            try {
+                ProcessBuilder pb = new ProcessBuilder("/system/bin/sh", "-c",
+                    "echo 'test' > '" + shFile.getAbsolutePath() + "'");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    Log.d(TAG, "shell: " + line);
+                }
+                int exit = p.waitFor();
+                Log.i(TAG, "Shell exit code: " + exit);
+                if (shFile.exists()) {
+                    Log.i(TAG, "Test 3b PASSED: Shell created file");
+                    shFile.delete();
+                } else {
+                    throw new IOException("DIAG: Shell also cannot create 'sh' file");
+                }
+            } catch (Exception e2) {
+                Log.e(TAG, "Test 3b FAILED: " + e2.getMessage());
+                throw new IOException("DIAG: Cannot create file named 'sh': " + e.getMessage());
+            }
+        }
+
+        // Test 4: Can we create a file named "busybox"?
+        Log.i(TAG, "Test 4: Creating file named 'busybox'...");
+        File bbFile = new File(testDir, "busybox");
+        forceDelete(bbFile);
+        FileOutputStream bbFos = new FileOutputStream(bbFile);
+        bbFos.write("test busybox content".getBytes());
+        bbFos.close();
+        Log.i(TAG, "Test 4 PASSED: Created " + bbFile);
+        bbFile.delete();
+
+        // Clean up test directory
+        testDir.delete();
+        new File(baseDir, "rootfs").delete();
+
+        Log.i(TAG, "=== DIAGNOSTIC TEST PASSED ===");
+    }
+
+    /**
      * Set up the Linux environment (call from background thread)
      */
     public void setup(SetupCallback callback) {
@@ -231,6 +314,11 @@ public class LinuxEnvironment {
             currentStep = "nuclear cleanup";
             callback.onProgress("Nuclear cleanup...", 2);
             nuclearCleanup();
+
+            // DIAGNOSTIC: Test if we can create files before proceeding
+            currentStep = "diagnostic test";
+            callback.onProgress("Testing file creation...", 3);
+            runDiagnosticTest();
 
             currentStep = "creating directories";
             callback.onProgress("Creating directories...", 5);
