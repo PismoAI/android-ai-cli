@@ -138,10 +138,16 @@ public class TermuxCheckActivity extends Activity {
     }
 
     private boolean isTermuxInstalled() {
+        Log.d(TAG, "Checking for Termux package: " + TERMUX_PACKAGE);
         try {
-            getPackageManager().getPackageInfo(TERMUX_PACKAGE, 0);
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(TERMUX_PACKAGE, 0);
+            Log.d(TAG, "Termux found! Version: " + info.versionName + " (" + info.versionCode + ")");
             return true;
         } catch (PackageManager.NameNotFoundException e) {
+            Log.d(TAG, "Termux package not found: " + TERMUX_PACKAGE);
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking for Termux: " + e.getMessage(), e);
             return false;
         }
     }
