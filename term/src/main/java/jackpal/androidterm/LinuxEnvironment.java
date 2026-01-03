@@ -317,48 +317,12 @@ public class LinuxEnvironment {
     private void extractTarGz(File tarGzFile, File destDir) throws IOException {
         Log.i(TAG, "Starting extraction of " + tarGzFile.getAbsolutePath());
 
-        // Try system tar first
-        boolean systemTarWorked = false;
-        String[] tarCommands = {"/system/bin/tar", "/system/bin/toybox tar", "tar"};
+        // Always use Java extraction - system tar creates symlinks that cause EROFS errors on Android
+        // The Java extraction handles symlinks properly by copying files instead
+        Log.i(TAG, "Using Java-based extraction (avoids Android symlink issues)");
+        extractTarGzFallback(tarGzFile, destDir);
 
-        for (String tarCmd : tarCommands) {
-            try {
-                File tarBin = new File(tarCmd.split(" ")[0]);
-                if (!tarBin.exists() && !tarCmd.equals("tar")) continue;
-
-                Log.i(TAG, "Trying: " + tarCmd);
-                ProcessBuilder pb = new ProcessBuilder(
-                    "sh", "-c",
-                    tarCmd + " -xzf " + tarGzFile.getAbsolutePath() + " -C " + destDir.getAbsolutePath()
-                );
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-
-                // Read output to prevent blocking
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Log.d(TAG, "tar: " + line);
-                }
-
-                int exitCode = p.waitFor();
-                if (exitCode == 0) {
-                    Log.i(TAG, "System tar succeeded");
-                    systemTarWorked = true;
-                    break;
-                }
-                Log.w(TAG, "tar exited with code " + exitCode);
-            } catch (Exception e) {
-                Log.w(TAG, "tar failed: " + e.getMessage());
-            }
-        }
-
-        if (!systemTarWorked) {
-            Log.i(TAG, "Falling back to Java extraction");
-            extractTarGzFallback(tarGzFile, destDir);
-        }
-
-        // ALWAYS ensure critical symlinks exist, regardless of extraction method
+        // ALWAYS ensure critical symlinks exist
         createCriticalSymlinks(destDir);
     }
 
@@ -524,12 +488,7 @@ public class LinuxEnvironment {
 
             // Fallback: copy busybox to sh
             Log.i(TAG, "Falling back to copying busybox to sh");
-            // Delete any broken symlink first (exists() returns false but file may still be there)
-            try {
-                Files.deleteIfExists(sh.toPath());
-            } catch (Exception e) {
-                Log.w(TAG, "Could not delete existing sh: " + e.getMessage());
-            }
+            // forceDelete is called inside copyFile - handles broken symlinks
             copyFile(busybox, sh);
             sh.setExecutable(true, false);
 
@@ -546,8 +505,7 @@ public class LinuxEnvironment {
             File cmdFile = new File(binDir, cmd);
             if (!cmdFile.exists() || !cmdFile.canExecute()) {
                 try {
-                    // Delete any broken symlink first
-                    Files.deleteIfExists(cmdFile.toPath());
+                    // forceDelete is called inside copyFile - handles broken symlinks
                     copyFile(busybox, cmdFile);
                     cmdFile.setExecutable(true, false);
                 } catch (Exception e) {
@@ -625,6 +583,9 @@ public class LinuxEnvironment {
     }
 
     private void copyFile(File src, File dst) throws IOException {
+        // Aggressively delete destination first - handles symlinks, broken symlinks, etc.
+        forceDelete(dst);
+
         FileInputStream in = new FileInputStream(src);
         FileOutputStream out = new FileOutputStream(dst);
         byte[] buffer = new byte[8192];
@@ -634,6 +595,63 @@ public class LinuxEnvironment {
         }
         in.close();
         out.close();
+    }
+
+    /**
+     * Forcefully delete a file, handling symlinks, broken symlinks, and permission issues
+     */
+    private void forceDelete(File file) {
+        String path = file.getAbsolutePath();
+
+        // Method 1: Java NIO Files.deleteIfExists (handles symlinks on Android 8+)
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                Files.deleteIfExists(file.toPath());
+                if (!file.exists() && !Files.isSymbolicLink(file.toPath())) {
+                    return; // Success
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "NIO delete failed for " + path + ": " + e.getMessage());
+            }
+        }
+
+        // Method 2: Standard Java delete
+        try {
+            file.setWritable(true, false);
+            if (file.delete()) {
+                return; // Success
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "Java delete failed for " + path + ": " + e.getMessage());
+        }
+
+        // Method 3: Shell rm -f command
+        try {
+            ProcessBuilder pb = new ProcessBuilder("rm", "-f", path);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            p.waitFor();
+            if (!file.exists()) {
+                return; // Success
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "rm -f failed for " + path + ": " + e.getMessage());
+        }
+
+        // Method 4: Shell unlink command
+        try {
+            ProcessBuilder pb = new ProcessBuilder("unlink", path);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            p.waitFor();
+        } catch (Exception e) {
+            Log.d(TAG, "unlink failed for " + path + ": " + e.getMessage());
+        }
+
+        // Log if still exists
+        if (file.exists() || (Build.VERSION.SDK_INT >= 26 && Files.isSymbolicLink(file.toPath()))) {
+            Log.w(TAG, "Could not delete " + path + " - file may still exist");
+        }
     }
 
     private void deleteRecursive(File file) {
