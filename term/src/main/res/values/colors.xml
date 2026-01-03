@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary app color - dark blue/grey for terminal feel -->
+    <color name="primary">#1a1a2e</color>
+    <!-- Darker variant for status bar -->
+    <color name="primary_dark">#0f0f1a</color>
+    <!-- Accent color for interactive elements -->
+    <color name="accent">#4fc3f7</color>
+</resources>
