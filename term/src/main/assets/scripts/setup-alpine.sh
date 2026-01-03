@@ -2,6 +2,9 @@
 # Alpine Linux setup script for Android AI CLI
 # This runs inside the proot environment after Alpine is extracted
 
+# Set PATH explicitly - required for proot on Android
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 set -e
 
 echo "=== Setting up Alpine Linux environment ==="

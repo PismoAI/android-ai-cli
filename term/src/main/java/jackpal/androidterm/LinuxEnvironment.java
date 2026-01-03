@@ -83,8 +83,8 @@ public class LinuxEnvironment {
             "-b", "/sdcard:/sdcard",
             "-b", context.getFilesDir().getAbsolutePath() + ":/android",
             "-w", "/root",
-            "/bin/bash",
-            "--login"
+            "/bin/sh",
+            "-l"
         };
     }
 
@@ -678,11 +678,31 @@ public class LinuxEnvironment {
 
         FileWriter fw = new FileWriter(new File(profileDir, ".profile"));
         fw.write("#!/bin/sh\n");
+        fw.write("# Set PATH first - required for proot on Android\n");
+        fw.write("export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n");
+        fw.write("export HOME=/root\n");
+        fw.write("\n");
+        fw.write("# First-time setup runs automatically\n");
         fw.write("if [ ! -f /root/.setup_done ]; then\n");
-        fw.write("    echo 'Running first-time setup...'\n");
-        fw.write("    /root/setup.sh && touch /root/.setup_done\n");
+        fw.write("    echo ''\n");
+        fw.write("    echo '=== First-time setup ===' \n");
+        fw.write("    echo 'Installing packages, this may take a few minutes...'\n");
+        fw.write("    echo ''\n");
+        fw.write("    if /root/setup.sh; then\n");
+        fw.write("        touch /root/.setup_done\n");
+        fw.write("        echo ''\n");
+        fw.write("        echo 'Setup complete! Starting bash...'\n");
+        fw.write("        exec /bin/bash --login\n");
+        fw.write("    else\n");
+        fw.write("        echo 'Setup failed! You can retry by running: /root/setup.sh'\n");
+        fw.write("    fi\n");
+        fw.write("elif [ -x /bin/bash ]; then\n");
+        fw.write("    # Bash is installed, switch to it\n");
+        fw.write("    exec /bin/bash --login\n");
+        fw.write("else\n");
+        fw.write("    # Fallback: source bashrc if it exists\n");
+        fw.write("    [ -f /root/.bashrc ] && . /root/.bashrc\n");
         fw.write("fi\n");
-        fw.write("[ -f /root/.bashrc ] && . /root/.bashrc\n");
         fw.close();
         Log.i(TAG, "Created .profile");
     }
