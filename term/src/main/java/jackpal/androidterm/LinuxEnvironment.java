@@ -524,6 +524,12 @@ public class LinuxEnvironment {
 
             // Fallback: copy busybox to sh
             Log.i(TAG, "Falling back to copying busybox to sh");
+            // Delete any broken symlink first (exists() returns false but file may still be there)
+            try {
+                Files.deleteIfExists(sh.toPath());
+            } catch (Exception e) {
+                Log.w(TAG, "Could not delete existing sh: " + e.getMessage());
+            }
             copyFile(busybox, sh);
             sh.setExecutable(true, false);
 
@@ -538,8 +544,10 @@ public class LinuxEnvironment {
         String[] criticalLinks = {"ash", "ls", "cat", "cp", "mv", "rm", "mkdir", "chmod", "chown", "ln", "env", "which", "pwd", "echo", "test", "true", "false"};
         for (String cmd : criticalLinks) {
             File cmdFile = new File(binDir, cmd);
-            if (!cmdFile.exists()) {
+            if (!cmdFile.exists() || !cmdFile.canExecute()) {
                 try {
+                    // Delete any broken symlink first
+                    Files.deleteIfExists(cmdFile.toPath());
                     copyFile(busybox, cmdFile);
                     cmdFile.setExecutable(true, false);
                 } catch (Exception e) {
