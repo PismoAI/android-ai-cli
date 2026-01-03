@@ -27,12 +27,14 @@ Android terminal app with proot + Alpine Linux so users can run Claude Code CLI.
 - Use system tar (creates problematic symlinks)
 
 ## Current Phase: 3
-**Status:** Fixed EROFS error, build successful, awaiting device test
+**Status:** Multiple EROFS fixes applied, build successful, awaiting device test
 **Changes Made:**
 1. Skip system tar entirely - use only Java extraction
 2. Added forceDelete() with 4 fallback deletion strategies
 3. Handles broken symlinks that cause EROFS on Android
 4. Added colors.xml for v21 theme (fixed startup crash)
+5. createSymlink now deletes existing files before creating symlinks
+6. Clean up failed symlink attempts to prevent blocking
 
 ## Key Fixes Applied
 
