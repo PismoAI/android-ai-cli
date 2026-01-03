@@ -582,22 +582,22 @@ public class LinuxEnvironment {
                 // Normalize the entry name for checking
                 String normalizedName = name.startsWith("/") ? name.substring(1) : name;
 
-                // SKIP ALL bin and sbin entries - including the directories themselves!
+                // SKIP ALL bin and sbin entries EXCEPT busybox
                 // We'll create bin/ and sbin/ directories fresh with proper Android permissions
-                // This avoids inheriting any weird attributes from the Alpine tarball
-                if (normalizedName.equals("bin") || normalizedName.equals("bin/") ||
+                boolean isBusybox = normalizedName.equals("bin/busybox");
+                if ((normalizedName.equals("bin") || normalizedName.equals("bin/") ||
                     normalizedName.equals("sbin") || normalizedName.equals("sbin/") ||
-                    normalizedName.startsWith("bin/") || normalizedName.startsWith("sbin/")) {
-                    // Only keep bin/busybox - we need this binary
-                    if (!normalizedName.equals("bin/busybox")) {
-                        Log.d(TAG, "Skipping bin/sbin entry: " + name);
-                        if (!entry.isDirectory()) {
-                            symlinkCount++; // Count as skipped
-                        }
-                        continue;
+                    normalizedName.startsWith("bin/") || normalizedName.startsWith("sbin/")) && !isBusybox) {
+                    Log.d(TAG, "Skipping bin/sbin entry: " + name);
+                    if (!entry.isDirectory()) {
+                        symlinkCount++; // Count as skipped
                     }
-                    // For bin/busybox, we need to ensure bin/ directory exists first
-                    Log.d(TAG, "Will extract busybox - ensuring bin/ dir exists");
+                    continue;
+                }
+
+                // Special handling for busybox - extract it even if marked as symlink/hardlink
+                if (isBusybox) {
+                    Log.i(TAG, "Found busybox entry: " + name + " (type=" + (int)entry.type + ")");
                     File binDirForBusybox = new File(destDir, "bin");
                     if (!binDirForBusybox.exists()) {
                         binDirForBusybox.mkdirs();
@@ -605,6 +605,17 @@ public class LinuxEnvironment {
                         binDirForBusybox.setWritable(true, false);
                         binDirForBusybox.setExecutable(true, false);
                     }
+                    // Force extract busybox as regular file
+                    File busyboxFile = new File(destDir, "bin/busybox");
+                    forceDelete(busyboxFile);
+                    FileOutputStream out = new FileOutputStream(busyboxFile);
+                    tarIn.copyEntryContents(out);
+                    out.close();
+                    busyboxFile.setExecutable(true, false);
+                    busyboxFile.setReadable(true, false);
+                    Log.i(TAG, "Extracted busybox: " + busyboxFile.length() + " bytes");
+                    fileCount++;
+                    continue;
                 }
 
                 // Log what we're extracting for debugging
