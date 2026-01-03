@@ -329,13 +329,32 @@ public class LinuxEnvironment {
     private void extractTarGzFallback(File tarGzFile, File destDir) throws IOException {
         Log.i(TAG, "Starting Java-based extraction to " + destDir.getAbsolutePath());
 
-        // Ensure destDir exists and is writable
-        if (!destDir.exists()) {
-            destDir.mkdirs();
+        // AGGRESSIVE CLEANUP: Delete the entire destDir and recreate it
+        // This ensures no leftover files or symlinks from previous attempts
+        if (destDir.exists()) {
+            Log.i(TAG, "Deleting existing destDir to ensure clean extraction");
+            deleteRecursiveWithShell(destDir);
+        }
+
+        // Recreate directory
+        if (!destDir.mkdirs()) {
+            throw new IOException("Failed to create destDir: " + destDir);
         }
         destDir.setReadable(true, false);
         destDir.setWritable(true, false);
         destDir.setExecutable(true, false);
+
+        // Verify we can write
+        File testFile = new File(destDir, ".write_test_" + System.currentTimeMillis());
+        try {
+            if (!testFile.createNewFile()) {
+                throw new IOException("Cannot create test file in destDir");
+            }
+            testFile.delete();
+        } catch (Exception e) {
+            throw new IOException("destDir is not writable: " + e.getMessage());
+        }
+        Log.i(TAG, "destDir is writable, proceeding with extraction");
 
         // Manual extraction using Java with larger buffer
         FileInputStream fis = new FileInputStream(tarGzFile);
@@ -433,12 +452,9 @@ public class LinuxEnvironment {
             tarIn.close();
         }
 
-        // Process symlinks
-        Log.i(TAG, "Creating " + symlinks.size() + " symlinks...");
-        for (String[] link : symlinks) {
-            createSymlink(destDir, link[0], link[1]);
-        }
-        Log.i(TAG, "Symlinks created");
+        // SKIP symlink creation entirely - Android has issues with symlinks
+        // The createCriticalSymlinks() function will copy busybox to required locations
+        Log.i(TAG, "Skipping " + symlinks.size() + " symlinks (will copy files instead)");
     }
 
     private void createCriticalSymlinks(File destDir) throws IOException {
@@ -675,6 +691,62 @@ public class LinuxEnvironment {
         // Make writable before deleting
         file.setWritable(true, false);
         file.delete();
+    }
+
+    /**
+     * More aggressive deletion using shell commands - handles stubborn files/symlinks
+     */
+    private void deleteRecursiveWithShell(File dir) {
+        String path = dir.getAbsolutePath();
+        Log.i(TAG, "Aggressive delete of: " + path);
+
+        // Try shell rm -rf first (most reliable)
+        try {
+            ProcessBuilder pb = new ProcessBuilder("rm", "-rf", path);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                Log.d(TAG, "rm -rf: " + line);
+            }
+            p.waitFor();
+            if (!dir.exists()) {
+                Log.i(TAG, "rm -rf succeeded");
+                return;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "rm -rf failed: " + e.getMessage());
+        }
+
+        // Fallback to Java deletion
+        deleteRecursive(dir);
+
+        // If still exists, try individual file deletion with shell
+        if (dir.exists()) {
+            try {
+                // Find and delete all files
+                ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                    "find '" + path + "' -type f -exec rm -f {} \\; 2>/dev/null; " +
+                    "find '" + path + "' -type l -exec rm -f {} \\; 2>/dev/null; " +
+                    "rm -rf '" + path + "' 2>/dev/null"
+                );
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                p.waitFor();
+            } catch (Exception e) {
+                Log.w(TAG, "find/rm failed: " + e.getMessage());
+            }
+        }
+
+        // Final Java attempt
+        if (dir.exists()) {
+            deleteRecursive(dir);
+        }
+
+        if (dir.exists()) {
+            Log.w(TAG, "Warning: Could not fully delete " + path);
+        }
     }
 
     private void configureDns() throws IOException {
