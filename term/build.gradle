@@ -43,5 +43,4 @@ android {
 dependencies {
     implementation project(':emulatorview')
     implementation project(':libtermexec')
-    implementation 'org.tukaani:xz:1.9'
 }
