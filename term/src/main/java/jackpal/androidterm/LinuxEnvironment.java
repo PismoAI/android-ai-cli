@@ -579,6 +579,16 @@ public class LinuxEnvironment {
                     continue;
                 }
 
+                // SKIP all bin/* entries - we'll create them manually from busybox
+                // This avoids EROFS errors on symlinks like bin/sh -> busybox
+                if (name.startsWith("bin/") && !name.equals("bin/busybox")) {
+                    Log.d(TAG, "Skipping bin entry (will create from busybox): " + name);
+                    if (!entry.isDirectory()) {
+                        symlinkCount++; // Count as skipped
+                    }
+                    continue;
+                }
+
                 File outFile = new File(destDir, name);
 
                 if (entry.isDirectory()) {
