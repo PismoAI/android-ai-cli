@@ -764,9 +764,7 @@ public class LinuxEnvironment {
 
         Log.i(TAG, "=== Creating critical symlinks ===");
 
-        // CRITICAL: Ensure bin/ and sbin/ directories exist with FULL permissions
-        // Since we skipped extracting them from the tarball, we need to create them fresh
-        Log.i(TAG, "Creating/verifying bin directory with full permissions...");
+        // Create bin/ and sbin/ directories with full permissions
         if (!binDir.exists()) {
             binDir.mkdirs();
         }
@@ -782,139 +780,30 @@ public class LinuxEnvironment {
         sbinDir.setExecutable(true, false);
 
         Log.i(TAG, "binDir exists: " + binDir.exists() + ", writable: " + binDir.canWrite());
-        Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + (busybox.exists() ? busybox.length() : 0));
-        Log.i(TAG, "sh exists: " + sh.exists());
 
-        // Extract busybox from assets if missing or empty (hardlink extraction can result in 0-byte files)
+        // Extract busybox from assets if missing or empty
         if (!busybox.exists() || busybox.length() == 0) {
-            Log.w(TAG, "busybox not found or empty, extracting from assets...");
-            try {
-                extractBusybox(busybox);
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to extract busybox: " + e.getMessage());
-                throw new IOException("busybox not found and extraction failed: " + e.getMessage());
-            }
+            Log.i(TAG, "Extracting busybox from assets...");
+            extractBusybox(busybox);
         }
-        // Make busybox executable
         busybox.setExecutable(true, false);
+        busybox.setReadable(true, false);
+        Log.i(TAG, "busybox ready: " + busybox.length() + " bytes");
 
-        // If /bin/sh doesn't exist, we need to create it
+        // Create /bin/sh by copying busybox (simple and reliable)
         if (!sh.exists()) {
-            Log.i(TAG, "Creating /bin/sh using PROOT + busybox --install");
-
-            // Use PROOT to run busybox --install - this handles symlinks properly with --link2symlink
-            File tmpDir = new File(baseDir, "tmp");
-            tmpDir.mkdirs();
-
-            try {
-                // Build proot command to run busybox --install inside the rootfs
-                ProcessBuilder pb = new ProcessBuilder(
-                    prootBinary.getAbsolutePath(),
-                    "--link2symlink",  // KEY: This makes symlinks work on Android!
-                    "-0",
-                    "-r", destDir.getAbsolutePath(),
-                    "-b", "/dev",
-                    "-b", "/proc",
-                    "-w", "/",
-                    "/bin/busybox", "--install", "-s", "/bin"
-                );
-                pb.environment().put("PROOT_TMP_DIR", tmpDir.getAbsolutePath());
-                pb.environment().put("PROOT_NO_SECCOMP", "1");
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Log.d(TAG, "proot busybox install: " + line);
-                }
-
-                int exitCode = p.waitFor();
-                Log.i(TAG, "proot busybox --install exit code: " + exitCode);
-
-                // Check if it worked
-                if (sh.exists()) {
-                    Log.i(TAG, "PROOT busybox --install succeeded, /bin/sh created!");
-                    return;
-                } else {
-                    Log.w(TAG, "PROOT busybox --install completed but /bin/sh not found");
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "PROOT busybox --install failed: " + e.getMessage());
-            }
-
-            // Fallback: try direct busybox --install (might create symlinks that don't work)
-            Log.i(TAG, "Trying direct busybox --install as fallback");
-            try {
-                ProcessBuilder pb = new ProcessBuilder(
-                    busybox.getAbsolutePath(), "--install", "-s", binDir.getAbsolutePath()
-                );
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Log.d(TAG, "busybox install: " + line);
-                }
-                p.waitFor();
-                if (sh.exists()) {
-                    Log.i(TAG, "Direct busybox --install succeeded");
-                    return;
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Direct busybox --install failed: " + e.getMessage());
-            }
-
-            // Last resort: copy busybox to sh
-            Log.i(TAG, "Last resort: copying busybox to sh");
-
-            // First verify we can write to binDir
-            File testFile = new File(binDir, ".write_test_" + System.currentTimeMillis());
-            try {
-                FileOutputStream testOut = new FileOutputStream(testFile);
-                testOut.write("test".getBytes());
-                testOut.close();
-                testFile.delete();
-                Log.i(TAG, "binDir write test PASSED");
-            } catch (Exception e) {
-                Log.e(TAG, "binDir write test FAILED: " + e.getMessage());
-                // Try recreating binDir entirely
-                Log.i(TAG, "Attempting to recreate binDir...");
-                try {
-                    deleteRecursiveWithShell(binDir);
-                    binDir.mkdirs();
-                    binDir.setReadable(true, false);
-                    binDir.setWritable(true, false);
-                    binDir.setExecutable(true, false);
-                    Log.i(TAG, "Recreated binDir");
-                } catch (Exception e2) {
-                    Log.e(TAG, "Failed to recreate binDir: " + e2.getMessage());
-                }
-            }
-
-            // Force delete sh before copying (handles broken symlinks, etc.)
+            Log.i(TAG, "Creating /bin/sh by copying busybox...");
             forceDelete(sh);
-
-            try {
-                copyFile(busybox, sh);
-                sh.setExecutable(true, false);
-                if (sh.exists()) {
-                    Log.i(TAG, "Created /bin/sh by copying busybox");
-                    // Don't return - continue to create other commands
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "copyFile failed: " + e.getMessage());
-                // Continue anyway - we'll try to create other commands
-            }
+            copyFile(busybox, sh);
+            sh.setExecutable(true, false);
+            sh.setReadable(true, false);
         }
 
-        // Check if we have sh now
         if (!sh.exists()) {
-            throw new IOException("Failed to create /bin/sh - all methods failed");
+            throw new IOException("Failed to create /bin/sh");
         }
 
-        Log.i(TAG, "Critical symlinks created via proot");
-        // Note: busybox --install creates ALL symlinks, so we don't need to do them individually
+        Log.i(TAG, "Critical files created: busybox=" + busybox.exists() + ", sh=" + sh.exists());
     }
 
     private void createSymlink(File destDir, String linkPath, String target) {
