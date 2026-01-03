@@ -22,6 +22,7 @@ public class NodeEnvironment {
     private final File libDir;
     private final File nodeBinary;
     private final File homeDir;
+    private final File nativeLibDir;  // Android allows execution from here
 
     public interface SetupCallback {
         void onProgress(String message, int percent);
@@ -33,8 +34,10 @@ public class NodeEnvironment {
         this.baseDir = new File(context.getFilesDir(), "node");
         this.binDir = new File(baseDir, "bin");
         this.libDir = new File(baseDir, "lib");
-        this.nodeBinary = new File(binDir, "node");
         this.homeDir = new File(baseDir, "home");
+        // Use native lib dir for node binary - Android allows execution from here
+        this.nativeLibDir = new File(context.getApplicationInfo().nativeLibraryDir);
+        this.nodeBinary = new File(nativeLibDir, "libnode.so");
     }
 
     /**
@@ -158,58 +161,16 @@ public class NodeEnvironment {
     }
 
     private void extractNode() throws IOException {
-        Log.i(TAG, "Extracting node from assets/bin/node-aarch64.xz");
+        // Node binary is bundled as libnode.so in jniLibs - Android extracts it automatically
+        // to nativeLibraryDir where it's allowed to execute
+        Log.i(TAG, "Using bundled node from: " + nodeBinary.getAbsolutePath());
 
-        InputStream in = context.getAssets().open("bin/node-aarch64.xz");
-        XZInputStream xzIn = new XZInputStream(in);
-        FileOutputStream out = new FileOutputStream(nodeBinary);
-
-        byte[] buffer = new byte[32768];
-        int len;
-        long total = 0;
-        while ((len = xzIn.read(buffer)) > 0) {
-            out.write(buffer, 0, len);
-            total += len;
+        if (!nodeBinary.exists()) {
+            throw new IOException("Node binary not found at: " + nodeBinary.getAbsolutePath() +
+                ". Expected libnode.so in native lib directory.");
         }
 
-        xzIn.close();
-        out.close();
-
-        // Set executable permission - try multiple methods
-        nodeBinary.setExecutable(true, false);
-        nodeBinary.setReadable(true, false);
-        nodeBinary.setWritable(true, false);
-
-        // If setExecutable failed, try chmod via shell
-        if (!nodeBinary.canExecute()) {
-            Log.w(TAG, "setExecutable() failed, trying chmod...");
-            try {
-                ProcessBuilder pb = new ProcessBuilder("chmod", "755", nodeBinary.getAbsolutePath());
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-                int exitCode = p.waitFor();
-                Log.i(TAG, "chmod exit code: " + exitCode);
-            } catch (Exception e) {
-                Log.w(TAG, "chmod failed: " + e.getMessage());
-            }
-        }
-
-        // Try again with Runtime.exec as another fallback
-        if (!nodeBinary.canExecute()) {
-            Log.w(TAG, "Still not executable, trying Runtime.exec chmod...");
-            try {
-                Runtime.getRuntime().exec("chmod 755 " + nodeBinary.getAbsolutePath()).waitFor();
-            } catch (Exception e) {
-                Log.w(TAG, "Runtime chmod failed: " + e.getMessage());
-            }
-        }
-
-        Log.i(TAG, "Extracted node: " + total + " bytes, executable: " + nodeBinary.canExecute());
-
-        // Final check - if still not executable, throw error
-        if (!nodeBinary.canExecute()) {
-            throw new IOException("Failed to set node binary as executable. Path: " + nodeBinary.getAbsolutePath());
-        }
+        Log.i(TAG, "Node binary exists: " + nodeBinary.length() + " bytes, executable: " + nodeBinary.canExecute());
 
         // Verify it works
         try {
@@ -287,9 +248,18 @@ public class NodeEnvironment {
     }
 
     private void createWrapperScripts() throws IOException {
+        // Create node wrapper (symlink to libnode.so in native lib dir)
+        File nodeScript = new File(binDir, "node");
+        FileWriter fw = new FileWriter(nodeScript);
+        fw.write("#!/system/bin/sh\n");
+        fw.write("exec \"" + nodeBinary.getAbsolutePath() + "\" \"$@\"\n");
+        fw.close();
+        nodeScript.setExecutable(true, false);
+        Log.i(TAG, "Created node wrapper -> " + nodeBinary.getAbsolutePath());
+
         // Create npm wrapper that uses our node
         File npmScript = new File(binDir, "npm");
-        FileWriter fw = new FileWriter(npmScript);
+        fw = new FileWriter(npmScript);
         fw.write("#!/system/bin/sh\n");
         fw.write("exec \"" + nodeBinary.getAbsolutePath() + "\" ");
         fw.write("\"" + new File(libDir, "node_modules/npm/bin/npm-cli.js").getAbsolutePath() + "\" ");
