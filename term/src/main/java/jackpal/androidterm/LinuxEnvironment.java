@@ -33,6 +33,9 @@ public class LinuxEnvironment {
     // Alpine Linux minirootfs URL (arm64)
     private static final String ALPINE_URL = "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.0-aarch64.tar.gz";
 
+    // Static busybox binary (fallback when extraction fails due to hardlinks)
+    private static final String BUSYBOX_URL = "https://busybox.net/downloads/binaries/1.35.0-arm64-linux-musl/busybox";
+
     private final Context context;
     private final File baseDir;
     private final File rootfsDir;
@@ -445,6 +448,50 @@ public class LinuxEnvironment {
         prootBinary.setExecutable(true, false);
     }
 
+    private void downloadBusybox(File busyboxFile) throws IOException {
+        Log.i(TAG, "Downloading static busybox from " + BUSYBOX_URL);
+
+        // Ensure parent directory exists
+        File parentDir = busyboxFile.getParentFile();
+        if (!parentDir.exists()) {
+            parentDir.mkdirs();
+            parentDir.setReadable(true, false);
+            parentDir.setWritable(true, false);
+            parentDir.setExecutable(true, false);
+        }
+
+        URL url = new URL(BUSYBOX_URL);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(60000);
+        conn.setRequestProperty("User-Agent", "Android AI CLI");
+        conn.setInstanceFollowRedirects(true);
+
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new IOException("Failed to download busybox: HTTP " + responseCode);
+        }
+
+        InputStream in = new BufferedInputStream(conn.getInputStream(), 8192);
+        FileOutputStream out = new FileOutputStream(busyboxFile);
+
+        byte[] buffer = new byte[8192];
+        int len;
+        int total = 0;
+        while ((len = in.read(buffer)) > 0) {
+            out.write(buffer, 0, len);
+            total += len;
+        }
+
+        in.close();
+        out.close();
+        conn.disconnect();
+
+        busyboxFile.setExecutable(true, false);
+        busyboxFile.setReadable(true, false);
+        Log.i(TAG, "Downloaded busybox: " + total + " bytes");
+    }
+
     private void downloadAlpine(SetupCallback callback) throws IOException {
         File tarFile = new File(baseDir, "alpine.tar.gz");
 
@@ -753,14 +800,18 @@ public class LinuxEnvironment {
         Log.i(TAG, "busybox exists: " + busybox.exists() + ", size: " + (busybox.exists() ? busybox.length() : 0));
         Log.i(TAG, "sh exists: " + sh.exists());
 
-        // Note: busybox might not exist at the expected location due to hardlink extraction issues
-        // Alpine Linux always has busybox, so we'll access it via proot regardless
-        if (!busybox.exists()) {
-            Log.w(TAG, "busybox not found at " + busybox.getAbsolutePath() + " - will access via proot");
-        } else {
-            // Make busybox executable
-            busybox.setExecutable(true, false);
+        // Download busybox if missing or empty (hardlink extraction can result in 0-byte files)
+        if (!busybox.exists() || busybox.length() == 0) {
+            Log.w(TAG, "busybox not found or empty, downloading static binary...");
+            try {
+                downloadBusybox(busybox);
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to download busybox: " + e.getMessage());
+                throw new IOException("busybox not found and download failed: " + e.getMessage());
+            }
         }
+        // Make busybox executable
+        busybox.setExecutable(true, false);
 
         // If /bin/sh doesn't exist, we need to create it
         if (!sh.exists()) {
