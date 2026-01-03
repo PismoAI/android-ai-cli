@@ -2,9 +2,9 @@ name: Build APK
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, standalone-fresh ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, standalone-fresh ]
   workflow_dispatch:
 
 jobs:
@@ -29,6 +29,19 @@ jobs:
       run: |
         yes | sdkmanager "ndk;25.2.9519653" --sdk_root=$ANDROID_SDK_ROOT || true
         echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+
+    - name: Download proot static binary
+      run: |
+        mkdir -p term/src/main/assets
+        # Download proot-static for aarch64 from official builds
+        curl -L "https://github.com/proot-me/proot/releases/download/v5.4.0/proot-v5.4.0-aarch64-static" -o term/src/main/assets/proot
+        chmod +x term/src/main/assets/proot
+
+    - name: Download Alpine minirootfs
+      run: |
+        # Download Alpine minirootfs for aarch64
+        curl -L "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/alpine-minirootfs-3.19.0-aarch64.tar.gz" -o term/src/main/assets/alpine-rootfs.tar.gz
+        ls -la term/src/main/assets/
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew

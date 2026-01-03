@@ -1,39 +1,56 @@
 # Android AI CLI
 
 ## Goal
-Android app that serves as a Termux companion for running Claude Code CLI.
+Standalone Android terminal app using proot + Alpine Linux.
 
-## Current Approach (v3) - Termux Companion
-Instead of bundling our own Linux environment, we leverage Termux which already solved Linux-on-Android.
+## Current Approach (v4) - Standalone Proot Terminal
+Uses proot with Alpine Linux minirootfs for a fully standalone terminal.
 
 ## Current State
-- ✅ Simple launcher UI
-- ✅ Detects if Termux is installed
-- ✅ Provides install links (F-Droid, GitHub)
-- ✅ Launches Termux when ready
+- ✅ AssetExtractor with proper hardlink handling in tar
+- ✅ ProotShellSession with correct proot flags
+- ✅ Launcher that extracts assets and starts terminal
+- ✅ GitHub Actions downloads proot and Alpine rootfs
 
 ## Architecture
 ```
 TermuxCheckActivity (launcher):
-  1. Check if com.termux package is installed
-  2. If not installed:
-     - Show "Termux is not installed" message
-     - Buttons to F-Droid and GitHub releases
-  3. If installed:
-     - Show "Termux is installed!" message
-     - "Launch Termux" button
-     - Opens com.termux.app.TermuxActivity
+  1. Check if assets are extracted
+  2. If not extracted:
+     - Show "First-time setup required"
+     - Extract proot, Alpine rootfs from assets
+  3. If extracted:
+     - Show "Ready!"
+     - Launch Term activity with proot session
+
+Term.java:
+  - Receives proot configuration from intent
+  - Creates ProotShellSession for proot mode
+  - Falls back to ShellTermSession if not proot mode
+
+ProotShellSession:
+  - Runs shell inside proot with Alpine rootfs
+  - Key flags: -0 --link2symlink
+  - Key env: PROOT_NO_SECCOMP=1, explicit PATH
+
+AssetExtractor:
+  - Extracts proot binary
+  - Extracts Alpine rootfs tar.gz
+  - Handles hardlinks (tar type '1') - THE KEY FIX
 ```
 
 ## Key Files
-- `TermuxCheckActivity.java` - Main launcher, checks for Termux
-- `Term.java` - (Legacy) Terminal emulator, uses ShellTermSession
-- `AndroidManifest.xml` - TermuxCheckActivity is the launcher
+- `TermuxCheckActivity.java` - Launcher, extracts assets
+- `Term.java` - Terminal activity, handles proot sessions
+- `ProotShellSession.java` - Shell session via proot
+- `AssetExtractor.java` - Asset extraction with tar/hardlink support
+- `.github/workflows/build.yml` - Downloads proot and Alpine
 
-## DO NOT
-- Copy Termux GPL code
-- Try to replace Termux functionality
-- Bundle our own Linux environment
+## Key Fixes Applied
+1. **TarEntry hardlink handling**: Type '1' entries are hardlinks, not symlinks
+2. **proot --link2symlink**: Required for Android's filesystem
+3. **PROOT_NO_SECCOMP=1**: Required for proot on Android
+4. **Explicit PATH**: Set full PATH inside Alpine
 
 ## Build Commands
 ```bash
@@ -49,18 +66,10 @@ git add -A && git commit -m "message" && git push
 ## Testing Flow
 1. Install APK on device
 2. Launch app
-3. If Termux not installed:
-   - Click F-Droid or GitHub button
-   - Install Termux
-   - Return to app
-4. If Termux installed:
-   - Click "Launch Termux"
-   - In Termux: `npm install -g @anthropic-ai/claude-code`
-   - Run: `claude`
+3. First run: "Setup & Launch" extracts proot + Alpine
+4. Subsequent runs: "Launch Terminal" opens directly
+5. Terminal runs with Alpine Linux shell
 
-## Why This Approach?
-1. **Termux is mature** - Years of development, proper Linux environment
-2. **No duplication** - Don't reinvent what already works
-3. **Smaller APK** - No bundled binaries or rootfs
-4. **Always up to date** - Termux updates independently
-5. **Community support** - Termux has active community and packages
+## Assets (downloaded by GitHub Actions)
+- `proot` - proot-static binary for aarch64
+- `alpine-rootfs.tar.gz` - Alpine Linux minirootfs

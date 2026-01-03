@@ -1,12 +1,12 @@
 package jackpal.androidterm;
 
 import android.app.Activity;
+import android.app.ProgressDialog;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
-import android.view.View;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -16,33 +16,38 @@ import android.util.TypedValue;
 import android.widget.Toast;
 import android.util.Log;
 
+import java.io.File;
+
 /**
- * Launcher activity that checks for Termux and provides installation/launch options.
- * This app is a Termux companion - it works WITH Termux, not standalone.
+ * Standalone terminal launcher.
+ * Extracts proot + Alpine Linux and launches a terminal session.
  */
 public class TermuxCheckActivity extends Activity {
-    private static final String TAG = "TermuxCheck";
-    private static final String TERMUX_PACKAGE = "com.termux";
-    private static final String FDROID_TERMUX_URL = "https://f-droid.org/packages/com.termux/";
-    private static final String GITHUB_TERMUX_URL = "https://github.com/termux/termux-app/releases";
+    private static final String TAG = "StandaloneLauncher";
 
     private LinearLayout mainLayout;
     private TextView statusText;
     private Button actionButton;
-    private Button fdroidButton;
-    private Button githubButton;
+    private TextView infoText;
+
+    private AssetExtractor assetExtractor;
+    private Handler mainHandler;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
+
+        mainHandler = new Handler(Looper.getMainLooper());
+        assetExtractor = new AssetExtractor(this);
+
         createUI();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        updateUI();
+        checkAndLaunch();
     }
 
     private void createUI() {
@@ -62,7 +67,7 @@ public class TermuxCheckActivity extends Activity {
 
         // Subtitle
         TextView subtitle = new TextView(this);
-        subtitle.setText("Termux Companion App");
+        subtitle.setText("Standalone Terminal");
         subtitle.setTextColor(Color.parseColor("#888888"));
         subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         subtitle.setGravity(Gravity.CENTER);
@@ -86,27 +91,13 @@ public class TermuxCheckActivity extends Activity {
         );
         btnParams.setMargins(0, 16, 0, 16);
         actionButton.setLayoutParams(btnParams);
+        actionButton.setText("Launch Terminal");
+        actionButton.setOnClickListener(v -> launchTerminal());
         mainLayout.addView(actionButton);
 
-        // F-Droid button (for installation)
-        fdroidButton = new Button(this);
-        fdroidButton.setText("Get from F-Droid");
-        fdroidButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        fdroidButton.setLayoutParams(btnParams);
-        fdroidButton.setOnClickListener(v -> openUrl(FDROID_TERMUX_URL));
-        mainLayout.addView(fdroidButton);
-
-        // GitHub button (for installation)
-        githubButton = new Button(this);
-        githubButton.setText("Get from GitHub");
-        githubButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        githubButton.setLayoutParams(btnParams);
-        githubButton.setOnClickListener(v -> openUrl(GITHUB_TERMUX_URL));
-        mainLayout.addView(githubButton);
-
         // Info text
-        TextView infoText = new TextView(this);
-        infoText.setText("This app requires Termux to be installed.\nTermux provides the Linux environment\nfor running Claude Code CLI.");
+        infoText = new TextView(this);
+        infoText.setText("Standalone Linux terminal\nusing proot + Alpine Linux");
         infoText.setTextColor(Color.parseColor("#666666"));
         infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         infoText.setGravity(Gravity.CENTER);
@@ -116,61 +107,79 @@ public class TermuxCheckActivity extends Activity {
         setContentView(mainLayout);
     }
 
-    private void updateUI() {
-        boolean termuxInstalled = isTermuxInstalled();
-        Log.i(TAG, "Termux installed: " + termuxInstalled);
+    private void checkAndLaunch() {
+        Log.i(TAG, "Checking if assets are extracted...");
 
-        if (termuxInstalled) {
-            statusText.setText("Termux is installed!");
+        if (assetExtractor.isExtracted()) {
+            Log.i(TAG, "Assets already extracted, ready to launch");
+            statusText.setText("Ready!");
             statusText.setTextColor(Color.parseColor("#4CAF50"));
-            actionButton.setText("Launch Termux");
-            actionButton.setOnClickListener(v -> launchTermux());
-            fdroidButton.setVisibility(View.GONE);
-            githubButton.setVisibility(View.GONE);
+            actionButton.setText("Launch Terminal");
+            actionButton.setEnabled(true);
         } else {
-            statusText.setText("Termux is not installed");
-            statusText.setTextColor(Color.parseColor("#ff6666"));
-            actionButton.setText("Check Again");
-            actionButton.setOnClickListener(v -> updateUI());
-            fdroidButton.setVisibility(View.VISIBLE);
-            githubButton.setVisibility(View.VISIBLE);
+            Log.i(TAG, "Assets not extracted, need to set up");
+            statusText.setText("First-time setup required");
+            statusText.setTextColor(Color.parseColor("#FFA500"));
+            actionButton.setText("Setup & Launch");
+            actionButton.setEnabled(true);
         }
     }
 
-    private boolean isTermuxInstalled() {
-        try {
-            getPackageManager().getPackageInfo(TERMUX_PACKAGE, 0);
-            return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
+    private void launchTerminal() {
+        if (assetExtractor.isExtracted()) {
+            // Assets ready, launch terminal directly
+            startTerminalActivity();
+        } else {
+            // Need to extract first
+            extractAssets();
         }
     }
 
-    private void launchTermux() {
-        try {
-            // Launch Termux main activity
-            Intent intent = new Intent();
-            intent.setClassName(TERMUX_PACKAGE, "com.termux.app.TermuxActivity");
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
+    private void extractAssets() {
+        // Show progress dialog
+        ProgressDialog progress = new ProgressDialog(this);
+        progress.setTitle("Setting up...");
+        progress.setMessage("Extracting Linux environment...");
+        progress.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+        progress.setCancelable(false);
+        progress.show();
 
-            // Show a toast with helpful info
-            Toast.makeText(this,
-                "To install Claude Code:\nnpm install -g @anthropic-ai/claude-code",
-                Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to launch Termux", e);
-            Toast.makeText(this, "Failed to launch Termux: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
+        // Run extraction in background
+        new Thread(() -> {
+            try {
+                assetExtractor.extractAll(message -> {
+                    mainHandler.post(() -> progress.setMessage(message));
+                });
+
+                mainHandler.post(() -> {
+                    progress.dismiss();
+                    Toast.makeText(this, "Setup complete!", Toast.LENGTH_SHORT).show();
+                    startTerminalActivity();
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to extract assets", e);
+                mainHandler.post(() -> {
+                    progress.dismiss();
+                    Toast.makeText(this, "Setup failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    statusText.setText("Setup failed: " + e.getMessage());
+                    statusText.setTextColor(Color.parseColor("#ff6666"));
+                });
+            }
+        }).start();
     }
 
-    private void openUrl(String url) {
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            startActivity(intent);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to open URL", e);
-            Toast.makeText(this, "Failed to open browser", Toast.LENGTH_SHORT).show();
-        }
+    private void startTerminalActivity() {
+        Log.i(TAG, "Starting terminal activity");
+
+        // Pass the asset paths to the Term activity
+        Intent intent = new Intent(this, Term.class);
+        intent.putExtra("proot_binary", assetExtractor.getProotBinary().getAbsolutePath());
+        intent.putExtra("rootfs_dir", assetExtractor.getRootfsDir().getAbsolutePath());
+        intent.putExtra("busybox_binary", assetExtractor.getBusyboxBinary().getAbsolutePath());
+        intent.putExtra("use_proot", true);
+        startActivity(intent);
+
+        // Don't finish - allow user to come back
     }
 }

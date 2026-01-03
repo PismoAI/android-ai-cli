@@ -118,6 +118,12 @@ public class Term extends Activity implements UpdateCallback, SharedPreferences.
 
     private boolean mBackKeyPressed;
 
+    // Proot configuration
+    private boolean mUseProot = false;
+    private String mProotBinary = null;
+    private String mRootfsDir = null;
+    private String mBusyboxBinary = null;
+
     private static final String ACTION_PATH_BROADCAST = "jackpal.androidterm.broadcast.APPEND_TO_PATH";
     private static final String ACTION_PATH_PREPEND_BROADCAST = "jackpal.androidterm.broadcast.PREPEND_TO_PATH";
     private static final String PERMISSION_PATH_BROADCAST = "jackpal.androidterm.permission.APPEND_TO_PATH";
@@ -332,6 +338,18 @@ public class Term extends Activity implements UpdateCallback, SharedPreferences.
 
         mPrivateAlias = new ComponentName(this, RemoteInterface.PRIVACT_ACTIVITY_ALIAS);
 
+        // Check for proot configuration from intent
+        Intent intent = getIntent();
+        if (intent != null) {
+            mUseProot = intent.getBooleanExtra("use_proot", false);
+            mProotBinary = intent.getStringExtra("proot_binary");
+            mRootfsDir = intent.getStringExtra("rootfs_dir");
+            mBusyboxBinary = intent.getStringExtra("busybox_binary");
+            if (mUseProot) {
+                Log.i(TermDebug.LOG_TAG, "Proot mode enabled: " + mProotBinary);
+            }
+        }
+
         if (icicle == null)
             onNewIntent(getIntent());
 
@@ -517,7 +535,24 @@ public class Term extends Activity implements UpdateCallback, SharedPreferences.
 
     private TermSession createTermSession() throws IOException {
         TermSettings settings = mSettings;
-        TermSession session = createTermSession(this, settings, settings.getInitialCommand());
+        GenericTermSession session;
+
+        if (mUseProot && mProotBinary != null && mRootfsDir != null) {
+            // Use proot session
+            Log.i(TermDebug.LOG_TAG, "Creating ProotShellSession");
+            session = new ProotShellSession(
+                settings,
+                settings.getInitialCommand(),
+                new java.io.File(mProotBinary),
+                new java.io.File(mRootfsDir),
+                mBusyboxBinary != null ? new java.io.File(mBusyboxBinary) : null
+            );
+        } else {
+            // Use regular shell session
+            session = new ShellTermSession(settings, settings.getInitialCommand());
+        }
+
+        session.setProcessExitMessage(getString(R.string.process_exit_message));
         session.setFinishCallback(mTermService);
         return session;
     }
