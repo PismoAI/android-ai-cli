@@ -28,7 +28,7 @@
                 android:hardwareAccelerated="true"
                 android:theme="@style/Theme"
                 android:usesCleartextTraffic="true">
-        <activity android:name=".TermuxCheckActivity"
+        <activity android:name=".SetupActivity"
                 android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
                 android:exported="true">
             <intent-filter>
