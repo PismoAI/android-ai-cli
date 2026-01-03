@@ -1,95 +1,75 @@
 # Android AI CLI
 
 ## Goal
-Android terminal app with proot + Alpine Linux so users can run Claude Code CLI.
+Android terminal app that runs Claude Code CLI directly - no proot, no Linux layer.
+
+## NEW APPROACH (v2)
+Skip proot/Alpine entirely. Bundle Node.js binary + npm directly in the APK.
 
 ## Current State
 - ✅ Terminal UI works
 - ✅ GitHub Actions builds APKs
-- ✅ Proot binary works (v5.1.0, aarch64, statically linked)
-- ✅ Alpine rootfs works with proot
-- ✅ apk package manager works (installs bash, curl, etc.)
-- 🔨 Java bootstrap - code updated, needs device testing
+- ✅ Node.js 25.2.1 aarch64 binary bundled (from Termux packages)
+- ✅ npm bundled (from Termux packages)
+- 🔨 Awaiting GitHub Actions build
 
-## Phases
-1. ✅ Proot binary for Android arm64 - DONE
-2. ✅ Alpine rootfs works with proot - DONE
-3. 🔨 Java bootstrap downloads on first launch ⬅️ TESTING
-4. ⬜ Terminal connects to proot shell
-5. ⬜ apk package manager works
-6. ⬜ Claude Code CLI runs
+## Architecture
+```
+APK Assets:
+  bin/node-aarch64.xz     (9MB compressed, 46MB extracted)
+  bin/node_modules.tar.xz (1.5MB compressed - contains npm)
+
+On first launch:
+  1. Extract node binary → /data/data/.../node/bin/node
+  2. Extract npm → /data/data/.../node/lib/node_modules/npm
+  3. Create wrapper scripts (npm, npx)
+  4. Launch shell with node in PATH
+
+No proot. No Alpine. Just native Android + Node.js.
+```
+
+## Key Files Changed
+- `NodeEnvironment.java` - New class for node setup (replaces LinuxEnvironment approach)
+- `NodeTermSession.java` - Terminal session with node in PATH
+- `SetupActivity.java` - Uses NodeEnvironment instead of LinuxEnvironment
+- `Term.java` - Uses NodeTermSession instead of ProotTermSession
+- `term/build.gradle` - Added org.tukaani:xz dependency for decompression
 
 ## DO NOT
 - Copy Termux GPL code
 - Use hardcoded paths
 - Use x86 binaries (need arm64)
 - Forget chmod +x on binaries
-- Use system tar (creates problematic symlinks)
-
-## Current Phase: 3
-**Status:** Multiple EROFS fixes applied, build successful, awaiting device test
-**Changes Made:**
-1. Skip system tar entirely - use only Java extraction
-2. Added forceDelete() with 4 fallback deletion strategies
-3. Handles broken symlinks that cause EROFS on Android
-4. Added colors.xml for v21 theme (fixed startup crash)
-5. createSymlink now deletes existing files before creating symlinks
-6. Clean up failed symlink attempts to prevent blocking
-
-## Key Fixes Applied
-
-### EROFS Read-Only Filesystem Error
-- **Problem:** System tar creates symlinks that can't be overwritten on Android
-- **Solution:** Skip system tar, use Java extraction only
-- **Added forceDelete()** with multiple fallback methods:
-  1. NIO Files.deleteIfExists
-  2. Standard Java delete
-  3. Shell `rm -f` command
-  4. Shell `unlink` command
-
-### Startup Crash (Missing Colors)
-- **Problem:** values-v21/styles.xml referenced undefined colors
-- **Solution:** Created colors.xml with primary, primary_dark, accent colors
-
-## Verified (Phase 1)
-- proot-aarch64 binary at: term/src/main/assets/bin/proot-aarch64
-- Version: 5.1.0 with process_vm and seccomp_filter accelerators
-- Type: ELF 64-bit aarch64, statically linked, Android NDK r20
-
-## Verified (Phase 2)
-- Alpine 3.19.0 minirootfs aarch64 works
-- Shell works: `proot -r ./rootfs /bin/busybox ash`
-- PATH must be set: `export PATH=/bin:/sbin:/usr/bin:/usr/sbin`
-- apk update/install works (trigger scripts fail but packages work)
-- Installed and verified: bash 5.2.21, curl 8.14.1
-
-## Critical proot flags
-```
-PROOT_TMP_DIR=/path/to/tmp    # Required writable temp dir
-PROOT_NO_SECCOMP=1            # May help on some Android versions
---link2symlink                 # Converts symlinks for Android
--0                            # Fake root (uid 0)
--r /path/to/rootfs            # Root filesystem
--b /proc -b /dev              # Bind mounts
-```
 
 ## Build Commands
 ```bash
-# Local build (requires Android SDK)
-./gradlew assembleDebug
+# Local build doesn't work on arm64 (NDK limitation)
+# Use GitHub Actions instead
 
-# GitHub Actions builds automatically on push
-# Download APK from Actions artifacts
+# Push changes to trigger build:
+git add -A && git commit -m "message" && git push
+
+# Download APK from GitHub Actions artifacts
 ```
 
 ## Testing Flow
 1. Install APK on device
 2. Launch app → SetupActivity shows
-3. Downloads Alpine (~5MB)
-4. Extracts using Java (avoids symlink issues)
-5. Creates critical files (busybox copies to sh, ash, etc.)
-6. Launches terminal with proot shell
-7. First-time setup script runs (installs bash, curl, nodejs)
+3. Extracts node/npm from assets (few seconds)
+4. Launches terminal with node in PATH
+5. Run: `node --version` → v25.2.1
+6. Run: `npm --version`
+7. Run: `npm install -g @anthropic-ai/claude-code`
+8. Run: `claude`
+
+## Environment Setup
+When the shell starts, these are set:
+```bash
+PATH=/data/.../node/bin:/data/.../node/lib/node_modules/.bin:/system/bin
+HOME=/data/.../node/home
+NPM_CONFIG_PREFIX=/data/.../node/lib
+NODE_PATH=/data/.../node/lib/node_modules
+```
 
 ---
 

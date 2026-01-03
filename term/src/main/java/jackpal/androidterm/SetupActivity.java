@@ -35,7 +35,7 @@ public class SetupActivity extends Activity {
     private Button retryButton;
     private Button copyErrorButton;
     private Handler handler;
-    private LinuxEnvironment linuxEnv;
+    private NodeEnvironment nodeEnv;
     private PowerManager.WakeLock wakeLock;
     private String lastError = "";
 
@@ -55,10 +55,10 @@ public class SetupActivity extends Activity {
 
         try {
             handler = new Handler(Looper.getMainLooper());
-            linuxEnv = new LinuxEnvironment(this);
+            nodeEnv = new NodeEnvironment(this);
 
             // Check if already set up
-            if (linuxEnv.isSetupComplete()) {
+            if (nodeEnv.isSetupComplete()) {
                 Log.i(TAG, "Setup already complete, launching terminal");
                 launchTerminal();
                 return;
@@ -166,7 +166,7 @@ public class SetupActivity extends Activity {
 
         // Info text
         TextView infoText = new TextView(this);
-        infoText.setText("This will download ~50MB and may take a few minutes.\nA full Linux environment with Node.js will be installed.");
+        infoText.setText("Extracting Node.js environment.\nThis only takes a few seconds.");
         infoText.setTextColor(Color.parseColor("#666666"));
         infoText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         infoText.setGravity(Gravity.CENTER);
@@ -187,7 +187,7 @@ public class SetupActivity extends Activity {
         lastError = "";
 
         new Thread(() -> {
-            linuxEnv.setup(new LinuxEnvironment.SetupCallback() {
+            nodeEnv.setup(new NodeEnvironment.SetupCallback() {
                 @Override
                 public void onProgress(String message, int percent) {
                     handler.post(() -> {
