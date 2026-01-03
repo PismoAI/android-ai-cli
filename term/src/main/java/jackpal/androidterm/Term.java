@@ -509,10 +509,10 @@ public class Term extends Activity implements UpdateCallback, SharedPreferences.
     protected static TermSession createTermSession(Context context, TermSettings settings, String initialCommand) throws IOException {
         GenericTermSession session;
 
-        // Check if Node environment is set up - use node session if so
-        NodeEnvironment nodeEnv = new NodeEnvironment(context);
-        if (nodeEnv.isSetupComplete()) {
-            session = new NodeTermSession(context, settings);
+        // Check if Linux environment is set up - use proot session if so
+        LinuxEnvironment linuxEnv = new LinuxEnvironment(context);
+        if (linuxEnv.isSetupComplete()) {
+            session = new ProotTermSession(context, settings);
         } else {
             session = new ShellTermSession(settings, initialCommand);
         }
